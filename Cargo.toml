@@ -1,0 +1,49 @@
+[package]
+name = "e-sh"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = { version = "0.34", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+    "wayland",
+    "x11",
+] }
+egui = "0.34"
+egui_dock = "0.19"
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "net",
+    "io-util",
+    "time",
+] }
+russh = "0.60"
+alacritty_terminal = "0.26"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+directories = "6"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1"
+parking_lot = "0.12"
+uuid = { version = "1", features = ["v4", "serde"] }
+rfd = "0.15"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "vendored"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

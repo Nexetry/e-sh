@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="e-sh" version="24.0.0">
+  <diagram id="esh-v1" name="e-sh System Architecture v1">
+    <mxGraphModel dx="1422" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="826" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="e-sh — System Architecture (v1)" style="text;html=1;align=center;verticalAlign=middle;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1080" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- User -->
+        <mxCell id="user" value="User" style="shape=umlActor;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="80" y="120" width="40" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- UI Layer -->
+        <mxCell id="ui_layer" value="UI Layer (egui / eframe)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="200" y="100" width="880" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="ui_main" value="Main Window&#10;(tabs, layout)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="220" y="150" width="160" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="ui_conn_mgr" value="Connection Manager UI&#10;(bookmarks, search)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="400" y="150" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="ui_terminal" value="Terminal View&#10;(SSH PTY)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="600" y="150" width="140" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="ui_files" value="File Browser&#10;(SFTP)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="760" y="150" width="140" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="ui_desktop" value="Desktop View&#10;(RDP / VNC)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="920" y="150" width="140" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Core / Application Layer -->
+        <mxCell id="core_layer" value="Application Core" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="200" y="280" width="880" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="core_session" value="Session Manager&#10;(lifecycle, tabs, events)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="220" y="330" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="core_conn" value="Connection Registry&#10;(profiles, tags)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="440" y="330" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="core_dispatch" value="Protocol Dispatcher" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="660" y="330" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="core_event" value="Event Bus / Async Runtime&#10;(tokio)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="860" y="330" width="200" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Protocol Adapters -->
+        <mxCell id="proto_layer" value="Protocol Adapters" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="200" y="460" width="880" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="proto_ssh" value="SSH Adapter&#10;(russh)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="230" y="510" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="proto_sftp" value="SFTP Adapter&#10;(russh-sftp)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="430" y="510" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="proto_rdp" value="RDP Adapter&#10;(ironrdp)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="630" y="510" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="proto_vnc" value="VNC Adapter&#10;(vnc-rs)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="830" y="510" width="180" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Transport / Network -->
+        <mxCell id="net_layer" value="Network / Transport (TCP, TLS)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="200" y="640" width="880" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="net_inner" value="OS sockets &#8226; tokio &#8226; rustls" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="420" y="675" width="440" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Sidecar: Config & Credentials -->
+        <mxCell id="store_layer" value="Configuration &amp; Credentials" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="40" y="280" width="140" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="store_cfg" value="Config Store&#10;(TOML)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="55" y="330" width="110" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="store_cred" value="Credential Store&#10;(OS keyring)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="55" y="420" width="110" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="store_log" value="Logs / Telemetry&#10;(opt-in)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="55" y="510" width="110" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Remote hosts -->
+        <mxCell id="remote_layer" value="Remote Hosts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="200" y="740" width="880" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="remote_ssh" value="SSH/SFTP Server" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="260" y="755" width="180" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="remote_rdp" value="Windows RDP Host" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="540" y="755" width="180" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="remote_vnc" value="VNC Server" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="820" y="755" width="180" height="35" as="geometry" />
+        </mxCell>
+
+        <!-- Edges: User -> UI -->
+        <mxCell id="e_user_ui" style="endArrow=classic;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="user" target="ui_layer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Edges: UI -> Core -->
+        <mxCell id="e_ui_core1" style="endArrow=classic;html=1;" edge="1" parent="1" source="ui_main" target="core_session">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ui_core2" style="endArrow=classic;html=1;" edge="1" parent="1" source="ui_conn_mgr" target="core_conn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ui_core3" style="endArrow=classic;html=1;" edge="1" parent="1" source="ui_terminal" target="core_dispatch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ui_core4" style="endArrow=classic;html=1;" edge="1" parent="1" source="ui_files" target="core_dispatch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ui_core5" style="endArrow=classic;html=1;" edge="1" parent="1" source="ui_desktop" target="core_dispatch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Edges: Core internal -->
+        <mxCell id="e_core_internal1" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="core_session" target="core_dispatch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_core_internal2" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="core_conn" target="core_dispatch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_core_internal3" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="core_dispatch" target="core_event">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Edges: Core -> Protocol Adapters -->
+        <mxCell id="e_disp_ssh" style="endArrow=classic;html=1;" edge="1" parent="1" source="core_dispatch" target="proto_ssh">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_disp_sftp" style="endArrow=classic;html=1;" edge="1" parent="1" source="core_dispatch" target="proto_sftp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_disp_rdp" style="endArrow=classic;html=1;" edge="1" parent="1" source="core_dispatch" target="proto_rdp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_disp_vnc" style="endArrow=classic;html=1;" edge="1" parent="1" source="core_dispatch" target="proto_vnc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Edges: Protocol -> Network -->
+        <mxCell id="e_ssh_net" style="endArrow=classic;html=1;" edge="1" parent="1" source="proto_ssh" target="net_layer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_sftp_net" style="endArrow=classic;html=1;" edge="1" parent="1" source="proto_sftp" target="net_layer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_rdp_net" style="endArrow=classic;html=1;" edge="1" parent="1" source="proto_rdp" target="net_layer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_vnc_net" style="endArrow=classic;html=1;" edge="1" parent="1" source="proto_vnc" target="net_layer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Edges: Network -> Remote -->
+        <mxCell id="e_net_remote_ssh" style="endArrow=classic;html=1;" edge="1" parent="1" source="net_inner" target="remote_ssh">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_net_remote_rdp" style="endArrow=classic;html=1;" edge="1" parent="1" source="net_inner" target="remote_rdp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_net_remote_vnc" style="endArrow=classic;html=1;" edge="1" parent="1" source="net_inner" target="remote_vnc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Edges: Store -> Core -->
+        <mxCell id="e_store_core1" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="store_cfg" target="core_conn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_store_core2" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="store_cred" target="core_dispatch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_store_core3" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="store_log" target="core_event">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
