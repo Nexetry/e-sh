@@ -20,12 +20,13 @@ jobs:
           - name: macos-universal
             os: macos-latest
             script: bash scripts/build-release.sh
-          - name: linux-x86_64
-            os: ubuntu-latest
-            script: bash scripts/build-release.sh
-          - name: windows-x86_64
-            os: windows-latest
-            script: pwsh scripts/build-release.ps1
+          # TODO: Add Windows and Linux builds once we have a working CI setup for them. For now, we can build those locally and upload the artifacts manually.
+          # - name: linux-x86_64
+          #   os: ubuntu-latest
+          #   script: bash scripts/build-release.sh
+          # - name: windows-x86_64
+          #   os: windows-latest
+          #   script: pwsh scripts/build-release.ps1
 
     steps:
       - uses: actions/checkout@v4
