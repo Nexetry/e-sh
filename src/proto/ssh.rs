@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use parking_lot::Mutex;
@@ -88,6 +89,64 @@ pub struct Client {
     port: u16,
     host_keys: HostKeyContext,
     remote_forwards: Arc<Mutex<HashMap<u32, (String, u16)>>>,
+    x11_target: Option<X11Target>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum X11Target {
+    #[cfg(unix)]
+    UnixSocket(PathBuf),
+    Tcp {
+        host: String,
+        port: u16,
+    },
+}
+
+impl X11Target {
+    pub(crate) fn from_display() -> Option<Self> {
+        let display = std::env::var("DISPLAY").ok()?;
+        let display = display.trim();
+        if display.is_empty() {
+            return None;
+        }
+        // Forms: ":0", ":0.0", "host:0", "host:0.0", "/tmp/.X11-unix/X0"
+        if display.starts_with('/') {
+            #[cfg(unix)]
+            {
+                return Some(X11Target::UnixSocket(PathBuf::from(display)));
+            }
+            #[cfg(not(unix))]
+            {
+                return None;
+            }
+        }
+        let (host, tail) = display.rsplit_once(':')?;
+        let display_num: u16 = tail.split('.').next()?.parse().ok()?;
+        if host.is_empty() {
+            #[cfg(unix)]
+            {
+                let sock = PathBuf::from(format!("/tmp/.X11-unix/X{display_num}"));
+                if sock.exists() {
+                    return Some(X11Target::UnixSocket(sock));
+                }
+                return Some(X11Target::Tcp {
+                    host: "127.0.0.1".into(),
+                    port: 6000 + display_num,
+                });
+            }
+            #[cfg(not(unix))]
+            {
+                return Some(X11Target::Tcp {
+                    host: "127.0.0.1".into(),
+                    port: 6000 + display_num,
+                });
+            }
+        }
+        Some(X11Target::Tcp {
+            host: host.to_string(),
+            port: 6000 + display_num,
+        })
+    }
 }
 
 impl Handler for Client {
@@ -219,12 +278,53 @@ impl Handler for Client {
         });
         Ok(())
     }
+
+    async fn server_channel_open_x11(
+        &mut self,
+        channel: Channel<Msg>,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let Some(target) = self.x11_target.clone() else {
+            tracing::warn!("server opened X11 channel but no local X server target is configured");
+            return Ok(());
+        };
+        tokio::spawn(async move {
+            let mut remote = channel.into_stream();
+            match target {
+                #[cfg(unix)]
+                X11Target::UnixSocket(path) => {
+                    match tokio::net::UnixStream::connect(&path).await {
+                        Ok(mut local) => {
+                            let _ = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, path = %path.display(), "x11 local unix connect failed");
+                        }
+                    }
+                }
+                X11Target::Tcp { host, port } => {
+                    match TcpStream::connect((host.as_str(), port)).await {
+                        Ok(mut local) => {
+                            let _ = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, target = %format!("{host}:{port}"), "x11 local tcp connect failed");
+                        }
+                    }
+                }
+            }
+        });
+        Ok(())
+    }
 }
 
 pub fn spawn_session(
     rt: &tokio::runtime::Handle,
     chain: Vec<Connection>,
     host_keys: HostKeyContext,
+    recorder: Option<crate::recording::Recorder>,
 ) -> SessionHandle {
     let (event_tx, event_rx) = unbounded_channel::<SessionEvent>();
     let (cmd_tx, cmd_rx) = unbounded_channel::<SessionCommand>();
@@ -255,7 +355,7 @@ pub fn spawn_session(
     let event_tx_task = event_tx.clone();
     let tunnels_task = tunnels.clone();
     rt.spawn(async move {
-        if let Err(e) = run_session(chain, host_keys, event_tx_task.clone(), cmd_rx, tunnels_task).await {
+        if let Err(e) = run_session(chain, host_keys, event_tx_task.clone(), cmd_rx, tunnels_task, recorder).await {
             let _ = event_tx_task.send(SessionEvent::Closed(Some(format!("{e:#}"))));
         } else {
             let _ = event_tx_task.send(SessionEvent::Closed(None));
@@ -285,9 +385,22 @@ pub(crate) async fn establish_session(
         return Err(anyhow!("empty connection chain"));
     }
 
-    let config = Arc::new(client::Config::default());
+    let target = chain.last().expect("chain non-empty");
+    let mut cfg = client::Config::default();
+    if target.keepalive_secs > 0 {
+        cfg.keepalive_interval = Some(Duration::from_secs(target.keepalive_secs as u64));
+    }
+    let config = Arc::new(cfg);
+
     let remote_forwards: Arc<Mutex<HashMap<u32, (String, u16)>>> =
         Arc::new(Mutex::new(HashMap::new()));
+
+    let target_x11 = if target.x11_forwarding {
+        X11Target::from_display()
+    } else {
+        None
+    };
+    let last_idx = chain.len() - 1;
 
     let head = &chain[0];
     let head_client = Client {
@@ -295,6 +408,7 @@ pub(crate) async fn establish_session(
         port: head.port,
         host_keys: host_keys.clone(),
         remote_forwards: remote_forwards.clone(),
+        x11_target: if last_idx == 0 { target_x11.clone() } else { None },
     };
     let mut current = client::connect(config.clone(), (head.host.as_str(), head.port), head_client)
         .await
@@ -303,7 +417,7 @@ pub(crate) async fn establish_session(
         .await
         .with_context(|| format!("authenticating to {}:{}", head.host, head.port))?;
 
-    for hop in &chain[1..] {
+    for (i, hop) in chain.iter().enumerate().skip(1) {
         let channel = current
             .channel_open_direct_tcpip(hop.host.clone(), hop.port as u32, "127.0.0.1", 0)
             .await
@@ -314,6 +428,7 @@ pub(crate) async fn establish_session(
             port: hop.port,
             host_keys: host_keys.clone(),
             remote_forwards: remote_forwards.clone(),
+            x11_target: if i == last_idx { target_x11.clone() } else { None },
         };
         let mut next = client::connect_stream(config.clone(), stream, hop_client)
             .await
@@ -333,11 +448,21 @@ async fn run_session(
     events: UnboundedSender<SessionEvent>,
     mut commands: UnboundedReceiver<SessionCommand>,
     tunnel_statuses: TunnelStatusMap,
+    mut recorder: Option<crate::recording::Recorder>,
 ) -> Result<()> {
     let target = chain
         .last()
         .cloned()
         .ok_or_else(|| anyhow!("empty connection chain"))?;
+
+    if let Some(script) = target.before_script.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let _ = events.send(SessionEvent::Output(
+            b"\r\n[e-sh] running before_script...\r\n".to_vec(),
+        ));
+        run_local_script(script, &target, true)
+            .await
+            .with_context(|| "before_script failed; aborting connection")?;
+    }
 
     let session = establish_session(&chain, host_keys).await?;
     let (session, remote_forwards) = session;
@@ -351,10 +476,52 @@ async fn run_session(
         .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
         .await
         .context("requesting PTY")?;
+
+    if target.x11_forwarding {
+        let cookie = random_x11_cookie();
+        if let Err(e) = channel
+            .request_x11(false, false, "MIT-MAGIC-COOKIE-1", cookie, 0)
+            .await
+        {
+            tracing::warn!(error = %e, "x11 forwarding request failed; continuing without");
+            let _ = events.send(SessionEvent::Output(
+                format!("\r\n[e-sh] X11 forwarding request failed: {e}\r\n").into_bytes(),
+            ));
+        }
+    }
+
     channel
         .request_shell(false)
         .await
         .context("requesting shell")?;
+
+    for cmd in &target.remote_commands {
+        let trimmed = cmd.trim_end_matches('\n');
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut line = trimmed.to_string();
+        line.push('\n');
+        if let Err(e) = channel.data(line.as_bytes()).await {
+            tracing::warn!(error = %e, "failed to send remote_command to shell");
+            break;
+        }
+    }
+
+    if let Some(script) = target
+        .after_connect_script
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let script_owned = script.to_string();
+        let target_for_env = target.clone();
+        tokio::spawn(async move {
+            if let Err(e) = run_local_script(&script_owned, &target_for_env, false).await {
+                tracing::warn!(error = %e, "after_connect_script failed");
+            }
+        });
+    }
 
     let session_arc = Arc::new(session);
 
@@ -402,11 +569,17 @@ async fn run_session(
             msg = channel.wait() => {
                 match msg {
                     Some(ChannelMsg::Data { data }) => {
+                        if let Some(r) = recorder.as_ref() {
+                            r.ssh_output(&data);
+                        }
                         if events.send(SessionEvent::Output(data.to_vec())).is_err() {
                             break Ok(());
                         }
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        if let Some(r) = recorder.as_ref() {
+                            r.ssh_output(&data);
+                        }
                         if events.send(SessionEvent::Output(data.to_vec())).is_err() {
                             break Ok(());
                         }
@@ -424,7 +597,77 @@ async fn run_session(
         h.abort();
     }
 
+    if let Some(r) = recorder.take() {
+        r.finish();
+    }
+
+    if let Some(script) = target
+        .after_close_script
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let script_owned = script.to_string();
+        let target_for_env = target.clone();
+        tokio::spawn(async move {
+            if let Err(e) = run_local_script(&script_owned, &target_for_env, false).await {
+                tracing::warn!(error = %e, "after_close_script failed");
+            }
+        });
+    }
+
     result
+}
+
+fn random_x11_cookie() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id() as u128;
+    let mut out = String::with_capacity(32);
+    let mut state = nanos ^ (pid.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    for _ in 0..16 {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let byte = ((state >> 64) & 0xFF) as u8;
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+async fn run_local_script(
+    script: &str,
+    conn: &Connection,
+    blocking: bool,
+) -> Result<()> {
+    use tokio::process::Command;
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = Command::new("cmd");
+        c.arg("/C").arg(script);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        let mut c = Command::new("sh");
+        c.arg("-c").arg(script);
+        c
+    };
+    cmd.env("ESH_HOST", &conn.host)
+        .env("ESH_PORT", conn.port.to_string())
+        .env("ESH_USER", &conn.username)
+        .env("ESH_NAME", &conn.name);
+    if blocking {
+        let status = cmd.status().await.context("spawning local script")?;
+        if !status.success() {
+            return Err(anyhow!("local script exited with {status}"));
+        }
+        Ok(())
+    } else {
+        let _ = cmd.spawn().context("spawning local script")?;
+        Ok(())
+    }
 }
 
 pub(crate) async fn authenticate(session: &mut Handle<Client>, conn: &Connection) -> Result<()> {

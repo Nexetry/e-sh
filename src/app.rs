@@ -17,14 +17,16 @@ use e_sh::config::store::{
 use e_sh::core::connection::{AuthMethod, Connection, ConnectionStore, Protocol};
 use e_sh::proto::sftp::spawn_sftp_session;
 use e_sh::proto::ssh::{HostKeyContext, spawn_session};
+use e_sh::recording::{self, Kind as RecordingKind, StartParams};
 use e_sh::ui::command_palette::{Command, CommandItem, CommandPalette, PaletteResult};
 use e_sh::ui::connection_tree::ConnectionTree;
-use e_sh::ui::dock::{EshTab, EshTabViewer, TerminalTab};
+use e_sh::ui::dock::{EshTab, EshTabViewer, TabAction, TerminalTab};
 use e_sh::ui::edit_dialog::EditConnectionDialog;
 use e_sh::ui::host_key_prompt::{HostKeyPromptResult, HostKeyPromptUi};
 use e_sh::ui::master_password_prompt::{
     MasterPasswordMode, MasterPasswordPromptUi, MasterPasswordResult,
 };
+use e_sh::ui::recordings_view::RecordingsTab;
 use e_sh::ui::sftp_tab::SftpTab;
 use e_sh::ui::status_bar::StatusBar;
 use e_sh::ui::terminal_widget::TerminalEmulator;
@@ -97,7 +99,7 @@ impl EshApp {
             host_key_prompt_rx,
             pending_host_key_prompts: VecDeque::new(),
             dock: DockState::new(Vec::new()),
-            viewer: EshTabViewer,
+            viewer: EshTabViewer::default(),
             status: "Ready".to_string(),
             editor: None,
             toaster: Toaster::default(),
@@ -193,16 +195,43 @@ impl EshApp {
             paths: self.paths.clone(),
             prompts: self.host_key_prompt_tx.clone(),
         };
-        let handle = spawn_session(&self.rt, chain, host_ctx);
+        let recorder = if conn.record_sessions {
+            match recording::start_recording(StartParams {
+                conn: &conn,
+                recordings_dir: &self.paths.recordings_dir,
+                kind: RecordingKind::Ssh,
+                width: 80,
+                height: 24,
+                term: "xterm-256color",
+            }) {
+                Ok(rec) => {
+                    self.toaster.warn(
+                        "Recording started",
+                        "Server output is being saved to disk in plaintext.",
+                    );
+                    Some(rec)
+                }
+                Err(e) => {
+                    tracing::warn!(?e, "failed to start SSH recording; continuing without");
+                    self.toaster.error("Recording failed to start", format!("{e:#}"));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let handle = spawn_session(&self.rt, chain, host_ctx, recorder);
         let emulator = TerminalEmulator::new(handle, 80, 24);
         let title = format!("{} ({})", conn.name, conn.protocol.label());
         let connection_label = format!("{}@{}:{}", conn.username, conn.host, conn.port);
         let tab = EshTab::Terminal(TerminalTab {
             id: Uuid::new_v4(),
+            source_connection: Some(id),
             title,
             connection_label,
             emulator,
             closed_reported: false,
+            tab_color: None,
         });
         self.push_tab(tab);
         self.status = format!("Opened {}@{}", conn.username, conn.host);
@@ -238,11 +267,37 @@ impl EshApp {
             paths: self.paths.clone(),
             prompts: self.host_key_prompt_tx.clone(),
         };
-        let handle = spawn_sftp_session(&self.rt, chain, host_ctx);
+        let recorder = if conn.record_sessions {
+            match recording::start_recording(StartParams {
+                conn: &conn,
+                recordings_dir: &self.paths.recordings_dir,
+                kind: RecordingKind::Sftp,
+                width: 0,
+                height: 0,
+                term: "",
+            }) {
+                Ok(rec) => {
+                    self.toaster.warn(
+                        "Recording started",
+                        "SFTP operations are being audit-logged to disk in plaintext.",
+                    );
+                    Some(rec)
+                }
+                Err(e) => {
+                    tracing::warn!(?e, "failed to start SFTP recording; continuing without");
+                    self.toaster.error("Recording failed to start", format!("{e:#}"));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let handle = spawn_sftp_session(&self.rt, chain, host_ctx, recorder);
         let title = format!("{} (SFTP)", conn.name);
         let connection_label = format!("{}@{}:{}", conn.username, conn.host, conn.port);
         let tab = EshTab::Sftp(SftpTab::new(
             Uuid::new_v4(),
+            Some(id),
             title,
             connection_label.clone(),
             handle,
@@ -333,6 +388,20 @@ impl EshApp {
             hint: "".to_string(),
         });
         items.push(CommandItem {
+            command: Command::OpenRecordings,
+            label: "Open recordings".to_string(),
+            detail: "Browse captured SSH / SFTP sessions".to_string(),
+            hint: "".to_string(),
+        });
+        if self.has_active_terminal() {
+            items.push(CommandItem {
+                command: Command::FindInTerminal,
+                label: "Find in terminal".to_string(),
+                detail: "Search scrollback of the active terminal".to_string(),
+                hint: "\u{2318}F".to_string(),
+            });
+        }
+        items.push(CommandItem {
             command: Command::Quit,
             label: "Quit e-sh".to_string(),
             detail: "Close the application".to_string(),
@@ -418,6 +487,12 @@ impl EshApp {
                 self.toaster
                     .info("Locked", "Master-password session cleared");
             }
+            Command::FindInTerminal => {
+                if let Some(tab) = self.active_terminal_tab_mut() {
+                    tab.emulator.open_find();
+                }
+            }
+            Command::OpenRecordings => self.open_recordings_tab(),
             Command::Quit => {
                 self.quit_requested = true;
             }
@@ -433,6 +508,25 @@ impl EshApp {
             let _ = self.dock.set_active_tab(path);
             self.dock.set_focused_node_and_surface(path.node_path());
         }
+    }
+
+    fn open_recordings_tab(&mut self) {
+        let existing: Option<Uuid> = self.dock.iter_all_tabs().find_map(|(_, tab)| match tab {
+            EshTab::Recordings(t) => Some(t.id),
+            _ => None,
+        });
+        if let Some(id) = existing {
+            self.focus_tab_by_id(id);
+            for (_, tab) in self.dock.iter_all_tabs_mut() {
+                if let EshTab::Recordings(t) = tab {
+                    t.reload();
+                }
+            }
+            return;
+        }
+        let tab = RecordingsTab::new(self.paths.recordings_dir.clone());
+        self.dock.push_to_focused_leaf(EshTab::Recordings(tab));
+        self.status = "Opened recordings".to_string();
     }
 
     fn close_active_tab(&mut self) {
@@ -452,6 +546,59 @@ impl EshApp {
             egui_dock::TabIndex(active_idx),
         );
         let _ = self.dock.remove_tab(tab_path);
+    }
+
+    fn handle_tab_action(&mut self, action: TabAction) {
+        match action {
+            TabAction::Duplicate { source_connection, is_sftp } => {
+                if is_sftp {
+                    self.open_sftp_tab(source_connection);
+                } else {
+                    self.open_connection(source_connection);
+                }
+            }
+            TabAction::Reconnect { tab_id, source_connection, is_sftp } => {
+                let target: Option<egui_dock::TabPath> = self
+                    .dock
+                    .iter_all_tabs()
+                    .find_map(|(path, tab)| if tab.id() == tab_id { Some(path) } else { None });
+                if let Some(path) = target {
+                    let _ = self.dock.remove_tab(path);
+                }
+                if is_sftp {
+                    self.open_sftp_tab(source_connection);
+                } else {
+                    self.open_connection(source_connection);
+                }
+            }
+        }
+    }
+
+    fn active_terminal_tab_mut(&mut self) -> Option<&mut TerminalTab> {
+        let node_path = self.dock.focused_leaf()?;
+        let leaf = self.dock.leaf_mut(node_path).ok()?;
+        if leaf.tabs.is_empty() {
+            return None;
+        }
+        let active_idx = leaf.active.0.min(leaf.tabs.len() - 1);
+        match leaf.tabs.get_mut(active_idx)? {
+            EshTab::Terminal(tab) => Some(tab),
+            _ => None,
+        }
+    }
+
+    fn has_active_terminal(&self) -> bool {
+        let Some(node_path) = self.dock.focused_leaf() else {
+            return false;
+        };
+        let Ok(leaf) = self.dock.leaf(node_path) else {
+            return false;
+        };
+        if leaf.tabs.is_empty() {
+            return false;
+        }
+        let active_idx = leaf.active.0.min(leaf.tabs.len() - 1);
+        matches!(leaf.tabs.get(active_idx), Some(EshTab::Terminal(_)))
     }
 
     fn poll_session_errors(&mut self) {
@@ -493,6 +640,7 @@ impl EshApp {
                         }
                     }
                 }
+                EshTab::Recordings(_) => {}
             }
         }
     }
@@ -542,6 +690,9 @@ impl App for EshApp {
                     if action.new_connection {
                         self.start_new_connection();
                     }
+                    if action.open_recordings {
+                        self.open_recordings_tab();
+                    }
                     if let Some(id) = action.open {
                         self.open_connection(id);
                     }
@@ -551,6 +702,18 @@ impl App for EshApp {
                     if let Some(id) = action.edit {
                         if let Some(conn) = self.store.find(id).cloned() {
                             self.editor = Some(EditConnectionDialog::from_connection(conn));
+                        }
+                    }
+                    if let Some(id) = action.duplicate {
+                        if let Some(src) = self.store.find(id).cloned() {
+                            let mut dup = src.clone();
+                            dup.id = Uuid::new_v4();
+                            dup.name = format!("{} (copy)", src.name);
+                            let dup_name = dup.name.clone();
+                            self.store.add(dup);
+                            self.persist();
+                            self.status = "Duplicated connection".to_string();
+                            self.toaster.success("Duplicated", dup_name);
                         }
                     }
                     if let Some(id) = action.delete {
@@ -648,6 +811,23 @@ impl App for EshApp {
                     .style(Style::from_egui(ctx.global_style().as_ref()))
                     .show_inside(ui, &mut self.viewer);
             });
+
+        if let Some(act) = self.viewer.recordings_action.take() {
+            if let Some((title, body)) = act.toast_info {
+                self.toaster.info(title, body);
+            }
+            if let Some((title, body)) = act.toast_warn {
+                self.toaster.warn(title, body);
+            }
+            if let Some((title, body)) = act.toast_error {
+                self.toaster.error(title, body);
+            }
+        }
+
+        let tab_actions = std::mem::take(&mut self.viewer.actions);
+        for action in tab_actions {
+            self.handle_tab_action(action);
+        }
 
         let palette_items = self.build_palette_items();
         match self.palette.show(&ctx, &palette_items) {

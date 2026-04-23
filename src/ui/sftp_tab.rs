@@ -21,11 +21,13 @@ pub struct TransferState {
 
 pub struct SftpTab {
     pub id: Uuid,
+    pub source_connection: Option<Uuid>,
     pub title: String,
     pub connection_label: String,
     pub handle: SftpHandle,
     pub closed: Option<String>,
     pub closed_reported: bool,
+    pub tab_color: Option<Color32>,
 
     pub remote_cwd: String,
     pub remote_entries: Vec<SftpEntry>,
@@ -80,16 +82,24 @@ pub enum SortDir {
 }
 
 impl SftpTab {
-    pub fn new(id: Uuid, title: String, connection_label: String, handle: SftpHandle) -> Self {
+    pub fn new(
+        id: Uuid,
+        source_connection: Option<Uuid>,
+        title: String,
+        connection_label: String,
+        handle: SftpHandle,
+    ) -> Self {
         let local_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
         let local_path_buffer = local_cwd.display().to_string();
         Self {
             id,
+            source_connection,
             title,
             connection_label,
             handle,
             closed: None,
             closed_reported: false,
+            tab_color: None,
             remote_cwd: String::from("/"),
             remote_entries: Vec::new(),
             remote_loading: true,

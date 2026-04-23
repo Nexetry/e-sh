@@ -22,7 +22,7 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
-    let _ = ui::dock::EshTabViewer;
+    let _ = ui::dock::EshTabViewer::default();
 
     eframe::run_native(
         "e-sh",

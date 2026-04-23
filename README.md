@@ -82,8 +82,16 @@ the keyboard-first, low-overhead feel that power users expect.
 - **Command palette + keyboard shortcuts**:
   - Press **Cmd-K** (macOS) / **Ctrl-K** (Linux / Windows) — or **Cmd/Ctrl-Shift-P** — to open a fuzzy command palette
   - Fuzzy search powered by `nucleo-matcher` (the same algorithm family as Helix / Zed)
-  - Commands: _New connection_, _Open_, _Open SFTP_, _Edit_ (per saved connection), _Switch to tab_ (per open tab), _Close tab_, _Toggle sidebar_, _Lock secrets_, _Quit_
+  - Commands: _New connection_, _Open_, _Open SFTP_, _Edit_ (per saved connection), _Switch to tab_ (per open tab), _Close tab_, _Toggle sidebar_, _Lock secrets_, _Open recordings_, _Quit_
   - Global app shortcuts: **Cmd/Ctrl-B** toggle sidebar · **Cmd/Ctrl-W** close active tab · **Cmd/Ctrl-Q** quit
+
+- **Session recording (opt-in, per connection)**:
+  - Enable on a per-connection basis via **Advanced → Recording** in the edit dialog (SSH and SFTP only)
+  - **SSH** sessions are recorded as gzipped [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/) (`<uuid>.cast.gz`) — replay with `asciinema play <(gunzip -c file.cast.gz)`
+  - **SFTP** sessions are recorded as gzipped JSON Lines audit logs (`<uuid>.sftp.jsonl.gz`) with one event per operation (`list`, `upload`, `download`, `mkdir`, `rmdir`, `remove`, `rename`, `realpath`, `upload_cancelled`, `download_cancelled`) — inspect with `gunzip -c file.sftp.jsonl.gz | jq -c .`
+  - Server output only — **your typed input (including passwords typed at prompts) is never captured**; however recordings are stored **plaintext on disk**, so treat them like logs
+  - A built-in **Recordings** tab (open from the sidebar bottom link or the command palette) lists every recording with status (_Complete_ / _Incomplete_ / _Partial_ / _File missing_), size, duration, and shortcuts to **Reveal in Finder/Explorer**, **Copy path**, **Delete**, or **Clean up missing**
+  - Manifests are stored at `recordings/recordings.toml` under your config dir; recordings never auto-expire — clean up manually
 
 ### Planned
 
@@ -91,12 +99,12 @@ the keyboard-first, low-overhead feel that power users expect.
 
 ## Supported Protocols
 
-| Protocol | Purpose                       | Status                                                                                                                        |
-| -------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| SSH      | Interactive remote shell      | **Working** (password + pubkey + agent, TOFU, tunnels `-L`/`-R`/`-D`, chained ProxyJump, scrollback + copy/paste, encrypted secret store)  |
-| SFTP     | Secure file transfer / browse | **Working** (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns, cancel)     |
-| RDP      | Remote desktop (Windows)      | Planned                                                                                                                       |
-| VNC      | Remote desktop (generic)      | Planned                                                                                                                       |
+| Protocol | Purpose                       | Status                                                                                                                                                             |
+| -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SSH      | Interactive remote shell      | **Working** (password + pubkey + agent, TOFU, tunnels `-L`/`-R`/`-D`, chained ProxyJump, scrollback + copy/paste, encrypted secret store, opt-in asciicast v2 recording) |
+| SFTP     | Secure file transfer / browse | **Working** (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns, cancel, opt-in JSONL audit recording)            |
+| RDP      | Remote desktop (Windows)      | Planned                                                                                                                                                            |
+| VNC      | Remote desktop (generic)      | Planned                                                                                                                                                            |
 
 ## Architecture
 
@@ -189,7 +197,7 @@ pwsh scripts/build-release.ps1
 Output:
 
 - **macOS**:
-  - `dist/e-sh-<version>-macos-universal.tar.gz` — universal arm64+x86_64 `e-sh.app` bundle, ad-hoc signed (on first launch Gatekeeper may warn — right-click → _Open_ to bypass)
+  - `dist/e-sh-<version>-macos-universal.tar.gz` — universal arm64+x86*64 `e-sh.app` bundle, ad-hoc signed (on first launch Gatekeeper may warn — right-click → \_Open* to bypass)
   - `dist/e-sh-<version>-macos-universal.dmg` — drag-to-Applications installer (requires [`create-dmg`](https://github.com/create-dmg/create-dmg); falls back to plain `hdiutil` if unavailable)
 - **Linux**:
   - `dist/e-sh-<version>-linux-x86_64.tar.gz` — raw `e-sh` binary + README
@@ -259,6 +267,10 @@ Files in that directory:
 - `secrets.enc.toml` — `age`-encrypted password / passphrase store, unlocked at
   startup with your master password
 - `host_keys.toml` — TOFU host-key store (algorithm + SHA-256 fingerprint + first-seen timestamp)
+- `recordings/` — session recordings directory (created on first opt-in recording):
+  - `recordings.toml` — manifest index of all recordings (id, connection, kind, started/ended timestamps, size, status)
+  - `<uuid>.cast.gz` — gzipped asciicast v2 files for SSH sessions
+  - `<uuid>.sftp.jsonl.gz` — gzipped JSON Lines audit logs for SFTP sessions
 
 > The first time you save a connection that needs a secret, `e-sh` asks you to
 > set a master password. On every subsequent launch it asks you to enter that
@@ -293,10 +305,10 @@ persist host keys), but expect breaking changes to config formats and APIs.
 - [x] SFTP adapter (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns)
 - [x] Command palette + keyboard-first navigation
 - [x] Native installers (`.dmg` / `.deb` / `.msi`) in the release pipeline
-- [ ] Tabbed multi-session UI polish (split panes, drag-to-reorder)
+- [x] Tabbed multi-session UI polish (split panes, drag-to-reorder)
+- [x] Session recording / logging (opt-in)
 - [ ] RDP adapter
 - [ ] VNC adapter
-- [ ] Session recording / logging (opt-in)
 - [ ] Plugin / scripting hooks
 
 ## Screenshots
@@ -320,6 +332,35 @@ connection. SSH agent forwarding and X11 forwarding are not yet implemented.
 
 **Q: Is it production ready?**
 No. See [Project Status](#project-status).
+
+**Q: How do I replay a recorded session?**
+SSH recordings are [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/)
+gzipped, so any asciicast-compatible player works. With
+[`asciinema`](https://asciinema.org) installed:
+
+```bash
+asciinema play <(gunzip -c ~/Library/Application\ Support/com.nexetry.e-sh/recordings/<uuid>.cast.gz)
+```
+
+SFTP recordings are gzipped JSON Lines audit logs — one event per line. Inspect
+them with:
+
+```bash
+gunzip -c ~/Library/Application\ Support/com.nexetry.e-sh/recordings/<uuid>.sftp.jsonl.gz | jq -c .
+```
+
+The built-in **Recordings** tab (sidebar bottom link, or `Cmd/Ctrl-K` →
+_Open recordings_) lists every recording with status and shortcuts to _Reveal_,
+_Copy path_, and _Delete_.
+
+**Q: Are my passwords captured in recordings?**
+No. `e-sh` only records **server output** (what you see on screen), not the
+keys you type — so passwords, passphrases, and typed secrets never enter the
+recording. That said, recordings are stored **plaintext on disk** (gzipped
+only), so treat the `recordings/` directory like any other log directory:
+anything the server printed (file contents you `cat`-ed, tokens the server
+echoed, etc.) will be in there. Recording is **opt-in per connection** and
+off by default.
 
 **Q: macOS shows an `AutoFill (e-sh)` process in Activity Monitor — is it accessing my Keychain?**
 No. `e-sh` does not link `Security.framework` and does not call any Keychain

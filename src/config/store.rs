@@ -13,6 +13,7 @@ const FILE: &str = "connections.toml";
 pub struct ConfigPaths {
     pub config_dir: PathBuf,
     pub connections_file: PathBuf,
+    pub recordings_dir: PathBuf,
 }
 
 impl ConfigPaths {
@@ -22,6 +23,7 @@ impl ConfigPaths {
         let config_dir = dirs.config_dir().to_path_buf();
         Ok(Self {
             connections_file: config_dir.join(FILE),
+            recordings_dir: config_dir.join("recordings"),
             config_dir,
         })
     }

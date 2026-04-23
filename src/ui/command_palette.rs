@@ -18,6 +18,8 @@ pub enum Command {
     CloseActiveTab,
     ToggleSidebar,
     LockSecrets,
+    FindInTerminal,
+    OpenRecordings,
     Quit,
 }
 

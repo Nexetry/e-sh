@@ -1,22 +1,26 @@
 use egui::{Color32, RichText, Ui, WidgetText};
-use egui_dock::TabViewer;
+use egui_dock::{NodePath, TabStyle, TabViewer};
 use uuid::Uuid;
 
 use crate::proto::ssh::TunnelStatusKind;
+use crate::ui::recordings_view::{RecordingsAction, RecordingsTab, render_recordings_tab};
 use crate::ui::sftp_tab::{SftpTab, render_sftp_tab};
 use crate::ui::terminal_widget::{TerminalEmulator, TerminalView};
 
 pub struct TerminalTab {
     pub id: Uuid,
+    pub source_connection: Option<Uuid>,
     pub title: String,
     pub connection_label: String,
     pub emulator: TerminalEmulator,
     pub closed_reported: bool,
+    pub tab_color: Option<Color32>,
 }
 
 pub enum EshTab {
     Terminal(TerminalTab),
     Sftp(SftpTab),
+    Recordings(RecordingsTab),
 }
 
 impl EshTab {
@@ -24,6 +28,7 @@ impl EshTab {
         match self {
             EshTab::Terminal(t) => t.id,
             EshTab::Sftp(t) => t.id,
+            EshTab::Recordings(t) => t.id,
         }
     }
 
@@ -31,23 +36,80 @@ impl EshTab {
         match self {
             EshTab::Terminal(t) => &t.title,
             EshTab::Sftp(t) => &t.title,
+            EshTab::Recordings(t) => &t.title,
         }
+    }
+
+    pub fn source_connection(&self) -> Option<Uuid> {
+        match self {
+            EshTab::Terminal(t) => t.source_connection,
+            EshTab::Sftp(t) => t.source_connection,
+            EshTab::Recordings(_) => None,
+        }
+    }
+
+    pub fn tab_color(&self) -> Option<Color32> {
+        match self {
+            EshTab::Terminal(t) => t.tab_color,
+            EshTab::Sftp(t) => t.tab_color,
+            EshTab::Recordings(_) => None,
+        }
+    }
+
+    pub fn set_tab_color(&mut self, color: Option<Color32>) {
+        match self {
+            EshTab::Terminal(t) => t.tab_color = color,
+            EshTab::Sftp(t) => t.tab_color = color,
+            EshTab::Recordings(_) => {}
+        }
+    }
+
+    pub fn is_sftp(&self) -> bool {
+        matches!(self, EshTab::Sftp(_))
     }
 }
 
-pub struct EshTabViewer;
+pub enum TabAction {
+    Duplicate { source_connection: Uuid, is_sftp: bool },
+    Reconnect { tab_id: Uuid, source_connection: Uuid, is_sftp: bool },
+}
+
+#[derive(Default)]
+pub struct EshTabViewer {
+    pub actions: Vec<TabAction>,
+    pub recordings_action: Option<RecordingsAction>,
+}
+
+const TAB_COLOR_PRESETS: &[(&str, Color32)] = &[
+    ("Red", Color32::from_rgb(230, 90, 90)),
+    ("Orange", Color32::from_rgb(230, 150, 70)),
+    ("Yellow", Color32::from_rgb(220, 200, 70)),
+    ("Green", Color32::from_rgb(100, 190, 110)),
+    ("Cyan", Color32::from_rgb(90, 190, 200)),
+    ("Blue", Color32::from_rgb(100, 150, 230)),
+    ("Purple", Color32::from_rgb(170, 120, 220)),
+    ("Pink", Color32::from_rgb(230, 130, 190)),
+    ("Gray", Color32::from_rgb(170, 170, 170)),
+];
 
 impl TabViewer for EshTabViewer {
     type Tab = EshTab;
 
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        WidgetText::from(tab.title().to_string())
+        let text = tab.title().to_string();
+        match tab.tab_color() {
+            Some(c) => WidgetText::from(RichText::new(text).color(c).strong()),
+            None => WidgetText::from(text),
+        }
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab {
             EshTab::Terminal(t) => {
-                t.emulator.pump();
+                let new_data = t.emulator.pump();
+                if new_data {
+                    t.emulator.refresh_find_matches();
+                }
                 render_tunnel_strip(ui, t);
                 TerminalView { emulator: &mut t.emulator }.show(ui);
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
@@ -55,6 +117,15 @@ impl TabViewer for EshTabViewer {
             EshTab::Sftp(t) => {
                 render_sftp_tab(ui, t);
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            EshTab::Recordings(t) => {
+                let act = render_recordings_tab(ui, t);
+                let has = act.toast_info.is_some()
+                    || act.toast_warn.is_some()
+                    || act.toast_error.is_some();
+                if has {
+                    self.recordings_action = Some(act);
+                }
             }
         }
     }
@@ -65,6 +136,85 @@ impl TabViewer for EshTabViewer {
 
     fn clear_background(&self, _tab: &Self::Tab) -> bool {
         true
+    }
+
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _path: NodePath) {
+        if matches!(tab, EshTab::Recordings(_)) {
+            return;
+        }
+
+        let tab_id = tab.id();
+        let source = tab.source_connection();
+        let is_sftp = tab.is_sftp();
+        let current_color = tab.tab_color();
+
+        let duplicate_enabled = source.is_some();
+        let reconnect_enabled = source.is_some();
+
+        if ui
+            .add_enabled(duplicate_enabled, egui::Button::new("Duplicate"))
+            .clicked()
+        {
+            if let Some(src) = source {
+                self.actions.push(TabAction::Duplicate { source_connection: src, is_sftp });
+            }
+            ui.close();
+        }
+
+        if ui
+            .add_enabled(reconnect_enabled, egui::Button::new("Reconnect"))
+            .clicked()
+        {
+            if let Some(src) = source {
+                self.actions.push(TabAction::Reconnect {
+                    tab_id,
+                    source_connection: src,
+                    is_sftp,
+                });
+            }
+            ui.close();
+        }
+
+        ui.menu_button("Tab Color", |ui| {
+            for (name, color) in TAB_COLOR_PRESETS {
+                let selected = current_color == Some(*color);
+                let swatch_text =
+                    RichText::new(format!("{}  {}", if selected { "*" } else { " " }, name))
+                        .color(*color)
+                        .strong();
+                if ui.button(swatch_text).clicked() {
+                    tab.set_tab_color(Some(*color));
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if ui
+                .add_enabled(current_color.is_some(), egui::Button::new("Reset"))
+                .clicked()
+            {
+                tab.set_tab_color(None);
+                ui.close();
+            }
+        });
+
+        ui.separator();
+    }
+
+    fn tab_style_override(
+        &self,
+        tab: &Self::Tab,
+        global_style: &TabStyle,
+    ) -> Option<TabStyle> {
+        let color = tab.tab_color()?;
+        let mut style = global_style.clone();
+        style.active.text_color = color;
+        style.inactive.text_color = color;
+        style.focused.text_color = color;
+        style.hovered.text_color = color;
+        style.active_with_kb_focus.text_color = color;
+        style.inactive_with_kb_focus.text_color = color;
+        style.focused_with_kb_focus.text_color = color;
+        Some(style)
     }
 }
 

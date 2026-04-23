@@ -15,6 +15,8 @@ use uuid::Uuid;
 
 use crate::core::connection::Connection;
 use crate::proto::ssh::{HostKeyContext, connect_and_authenticate};
+use crate::recording::{Recorder, SftpResult as RecSftpResult};
+use serde_json::json;
 
 #[derive(Debug, Clone)]
 pub struct SftpEntry {
@@ -72,13 +74,20 @@ pub fn spawn_sftp_session(
     rt: &tokio::runtime::Handle,
     chain: Vec<Connection>,
     host_keys: HostKeyContext,
+    recorder: Option<Recorder>,
 ) -> SftpHandle {
     let (event_tx, event_rx) = unbounded_channel::<SftpEvent>();
     let (cmd_tx, cmd_rx) = unbounded_channel::<SftpCommand>();
 
     let event_tx_task = event_tx.clone();
+    let recorder = recorder.map(Arc::new);
     rt.spawn(async move {
-        if let Err(e) = run_sftp_session(chain, host_keys, event_tx_task.clone(), cmd_rx).await {
+        let rec_for_run = recorder.clone();
+        let result = run_sftp_session(chain, host_keys, event_tx_task.clone(), cmd_rx, rec_for_run).await;
+        if let Some(r) = recorder.as_ref() {
+            r.finish_shared();
+        }
+        if let Err(e) = result {
             let _ = event_tx_task.send(SftpEvent::Closed(Some(format!("{e:#}"))));
         } else {
             let _ = event_tx_task.send(SftpEvent::Closed(None));
@@ -96,6 +105,7 @@ async fn run_sftp_session(
     host_keys: HostKeyContext,
     events: UnboundedSender<SftpEvent>,
     mut commands: UnboundedReceiver<SftpCommand>,
+    recorder: Option<Arc<Recorder>>,
 ) -> Result<()> {
     let handle = connect_and_authenticate(&chain, host_keys)
         .await
@@ -120,7 +130,7 @@ async fn run_sftp_session(
         .await
         .unwrap_or_else(|_| "/".to_string());
     let _ = events.send(SftpEvent::Connected { home: home.clone() });
-    let _ = list_and_emit(&sftp, &home, &events).await;
+    let _ = list_and_emit(&sftp, &home, &events, recorder.as_ref()).await;
 
     let cancels: Arc<Mutex<HashMap<Uuid, Arc<AtomicBool>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -128,16 +138,19 @@ async fn run_sftp_session(
     while let Some(cmd) = commands.recv().await {
         match cmd {
             SftpCommand::Connect => {
-                let _ = list_and_emit(&sftp, &home, &events).await;
+                let _ = list_and_emit(&sftp, &home, &events, recorder.as_ref()).await;
             }
             SftpCommand::ListDir { path } => {
-                let _ = list_and_emit(&sftp, &path, &events).await;
+                let _ = list_and_emit(&sftp, &path, &events, recorder.as_ref()).await;
             }
             SftpCommand::Realpath { path } => match sftp.canonicalize(&path).await {
                 Ok(resolved) => {
-                    let _ = list_and_emit(&sftp, &resolved, &events).await;
+                    let _ = list_and_emit(&sftp, &resolved, &events, recorder.as_ref()).await;
                 }
                 Err(e) => {
+                    if let Some(r) = recorder.as_ref() {
+                        r.sftp_event("realpath", RecSftpResult::Error, json!({"path": path, "error": e.to_string()}));
+                    }
                     let _ = events.send(SftpEvent::OperationError {
                         message: format!("realpath {path}: {e}"),
                     });
@@ -145,11 +158,17 @@ async fn run_sftp_session(
             },
             SftpCommand::Mkdir { path } => match sftp.create_dir(&path).await {
                 Ok(_) => {
+                    if let Some(r) = recorder.as_ref() {
+                        r.sftp_event("mkdir", RecSftpResult::Ok, json!({"path": path}));
+                    }
                     let _ = events.send(SftpEvent::OperationOk {
                         message: format!("mkdir {path}"),
                     });
                 }
                 Err(e) => {
+                    if let Some(r) = recorder.as_ref() {
+                        r.sftp_event("mkdir", RecSftpResult::Error, json!({"path": path, "error": e.to_string()}));
+                    }
                     let _ = events.send(SftpEvent::OperationError {
                         message: format!("mkdir {path}: {e}"),
                     });
@@ -157,11 +176,17 @@ async fn run_sftp_session(
             },
             SftpCommand::Rmdir { path } => match sftp.remove_dir(&path).await {
                 Ok(_) => {
+                    if let Some(r) = recorder.as_ref() {
+                        r.sftp_event("rmdir", RecSftpResult::Ok, json!({"path": path}));
+                    }
                     let _ = events.send(SftpEvent::OperationOk {
                         message: format!("rmdir {path}"),
                     });
                 }
                 Err(e) => {
+                    if let Some(r) = recorder.as_ref() {
+                        r.sftp_event("rmdir", RecSftpResult::Error, json!({"path": path, "error": e.to_string()}));
+                    }
                     let _ = events.send(SftpEvent::OperationError {
                         message: format!("rmdir {path}: {e}"),
                     });
@@ -169,11 +194,17 @@ async fn run_sftp_session(
             },
             SftpCommand::Remove { path } => match sftp.remove_file(&path).await {
                 Ok(_) => {
+                    if let Some(r) = recorder.as_ref() {
+                        r.sftp_event("remove", RecSftpResult::Ok, json!({"path": path}));
+                    }
                     let _ = events.send(SftpEvent::OperationOk {
                         message: format!("rm {path}"),
                     });
                 }
                 Err(e) => {
+                    if let Some(r) = recorder.as_ref() {
+                        r.sftp_event("remove", RecSftpResult::Error, json!({"path": path, "error": e.to_string()}));
+                    }
                     let _ = events.send(SftpEvent::OperationError {
                         message: format!("rm {path}: {e}"),
                     });
@@ -181,11 +212,17 @@ async fn run_sftp_session(
             },
             SftpCommand::Rename { from, to } => match sftp.rename(&from, &to).await {
                 Ok(_) => {
+                    if let Some(r) = recorder.as_ref() {
+                        r.sftp_event("rename", RecSftpResult::Ok, json!({"from": from, "to": to}));
+                    }
                     let _ = events.send(SftpEvent::OperationOk {
                         message: format!("mv {from} -> {to}"),
                     });
                 }
                 Err(e) => {
+                    if let Some(r) = recorder.as_ref() {
+                        r.sftp_event("rename", RecSftpResult::Error, json!({"from": from, "to": to, "error": e.to_string()}));
+                    }
                     let _ = events.send(SftpEvent::OperationError {
                         message: format!("mv {from} -> {to}: {e}"),
                     });
@@ -197,17 +234,47 @@ async fn run_sftp_session(
                 let cancel = Arc::new(AtomicBool::new(false));
                 cancels.lock().insert(id, cancel.clone());
                 let cancels_done = cancels.clone();
+                let rec = recorder.clone();
+                let local_for_tap = local.clone();
+                let remote_for_tap = remote.clone();
                 tokio::spawn(async move {
                     let res = do_upload(sftp, id, local, remote, events.clone(), cancel.clone())
                         .await;
                     cancels_done.lock().remove(&id);
-                    if let Err(e) = res {
-                        let msg = if cancel.load(Ordering::Relaxed) {
-                            "cancelled".to_string()
-                        } else {
-                            format!("{e:#}")
-                        };
-                        let _ = events.send(SftpEvent::TransferFailed { id, error: msg });
+                    match &res {
+                        Ok(_) => {
+                            if let Some(r) = rec.as_ref() {
+                                r.sftp_event(
+                                    "upload",
+                                    RecSftpResult::Ok,
+                                    json!({
+                                        "src": local_for_tap.display().to_string(),
+                                        "dst": remote_for_tap,
+                                    }),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            let cancelled = cancel.load(Ordering::Relaxed);
+                            if let Some(r) = rec.as_ref() {
+                                let op = if cancelled { "upload_cancelled" } else { "upload" };
+                                r.sftp_event(
+                                    op,
+                                    RecSftpResult::Error,
+                                    json!({
+                                        "src": local_for_tap.display().to_string(),
+                                        "dst": remote_for_tap,
+                                        "error": format!("{e:#}"),
+                                    }),
+                                );
+                            }
+                            let msg = if cancelled {
+                                "cancelled".to_string()
+                            } else {
+                                format!("{e:#}")
+                            };
+                            let _ = events.send(SftpEvent::TransferFailed { id, error: msg });
+                        }
                     }
                 });
             }
@@ -217,17 +284,47 @@ async fn run_sftp_session(
                 let cancel = Arc::new(AtomicBool::new(false));
                 cancels.lock().insert(id, cancel.clone());
                 let cancels_done = cancels.clone();
+                let rec = recorder.clone();
+                let local_for_tap = local.clone();
+                let remote_for_tap = remote.clone();
                 tokio::spawn(async move {
                     let res = do_download(sftp, id, remote, local, events.clone(), cancel.clone())
                         .await;
                     cancels_done.lock().remove(&id);
-                    if let Err(e) = res {
-                        let msg = if cancel.load(Ordering::Relaxed) {
-                            "cancelled".to_string()
-                        } else {
-                            format!("{e:#}")
-                        };
-                        let _ = events.send(SftpEvent::TransferFailed { id, error: msg });
+                    match &res {
+                        Ok(_) => {
+                            if let Some(r) = rec.as_ref() {
+                                r.sftp_event(
+                                    "download",
+                                    RecSftpResult::Ok,
+                                    json!({
+                                        "src": remote_for_tap,
+                                        "dst": local_for_tap.display().to_string(),
+                                    }),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            let cancelled = cancel.load(Ordering::Relaxed);
+                            if let Some(r) = rec.as_ref() {
+                                let op = if cancelled { "download_cancelled" } else { "download" };
+                                r.sftp_event(
+                                    op,
+                                    RecSftpResult::Error,
+                                    json!({
+                                        "src": remote_for_tap,
+                                        "dst": local_for_tap.display().to_string(),
+                                        "error": format!("{e:#}"),
+                                    }),
+                                );
+                            }
+                            let msg = if cancelled {
+                                "cancelled".to_string()
+                            } else {
+                                format!("{e:#}")
+                            };
+                            let _ = events.send(SftpEvent::TransferFailed { id, error: msg });
+                        }
                     }
                 });
             }
@@ -250,6 +347,7 @@ async fn list_and_emit(
     sftp: &SftpSession,
     path: &str,
     events: &UnboundedSender<SftpEvent>,
+    recorder: Option<&Arc<Recorder>>,
 ) -> Result<()> {
     match sftp.read_dir(path).await {
         Ok(read_dir) => {
@@ -272,6 +370,10 @@ async fn list_and_emit(
                 (false, true) => std::cmp::Ordering::Greater,
                 _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             });
+            let count = entries.len();
+            if let Some(r) = recorder {
+                r.sftp_event("list", RecSftpResult::Ok, json!({"path": path, "count": count}));
+            }
             let _ = events.send(SftpEvent::DirListing {
                 path: path.to_string(),
                 entries,
@@ -279,6 +381,9 @@ async fn list_and_emit(
             Ok(())
         }
         Err(e) => {
+            if let Some(r) = recorder {
+                r.sftp_event("list", RecSftpResult::Error, json!({"path": path, "error": e.to_string()}));
+            }
             let _ = events.send(SftpEvent::OperationError {
                 message: format!("ls {path}: {e}"),
             });

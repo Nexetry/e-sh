@@ -16,6 +16,7 @@ pub struct EditConnectionDialog {
     password: String,
     key_path: String,
     key_passphrase: String,
+    remote_commands_buf: String,
     section: Section,
 }
 
@@ -32,6 +33,8 @@ enum Section {
     Authentication,
     JumpHost,
     Tunnels,
+    Session,
+    Recording,
 }
 
 impl Section {
@@ -41,6 +44,8 @@ impl Section {
             Section::Authentication => "Authentication",
             Section::JumpHost => "Jump Host",
             Section::Tunnels => "Tunnels",
+            Section::Session => "Session",
+            Section::Recording => "Recording",
         }
     }
 }
@@ -70,6 +75,7 @@ impl EditConnectionDialog {
         };
         Self {
             open: true,
+            remote_commands_buf: conn.remote_commands.join("\n"),
             draft: conn,
             auth_kind,
             password,
@@ -111,8 +117,8 @@ impl EditConnectionDialog {
 
     fn render(&mut self, ui: &mut egui::Ui, store: &ConnectionStore, result: &mut DialogResult) {
         let visuals = ui.visuals().clone();
-        let panel_bg = visuals.extreme_bg_color;
-        let sidebar_bg = visuals.faint_bg_color;
+        let panel_bg = visuals.panel_fill;
+        let sidebar_bg = visuals.extreme_bg_color;
 
         egui::Panel::top("edit_dialog_header")
             .frame(Frame::NONE.inner_margin(Margin::ZERO))
@@ -189,6 +195,12 @@ impl EditConnectionDialog {
                     ui.add_space(12.0);
                     self.sidebar_group(ui, "Advanced");
                     self.sidebar_item(ui, Section::Tunnels);
+                    if matches!(self.draft.protocol, Protocol::Ssh) {
+                        self.sidebar_item(ui, Section::Session);
+                    }
+                    if matches!(self.draft.protocol, Protocol::Ssh | Protocol::Sftp) {
+                        self.sidebar_item(ui, Section::Recording);
+                    }
                 });
         });
     }
@@ -230,12 +242,151 @@ impl EditConnectionDialog {
     }
 
     fn detail(&mut self, ui: &mut egui::Ui, store: &ConnectionStore) {
+        if matches!(self.section, Section::Recording)
+            && !matches!(self.draft.protocol, Protocol::Ssh | Protocol::Sftp)
+        {
+            self.section = Section::Connection;
+        }
+        if matches!(self.section, Section::Session)
+            && !matches!(self.draft.protocol, Protocol::Ssh)
+        {
+            self.section = Section::Connection;
+        }
         match self.section {
             Section::Connection => self.connection_pane(ui),
             Section::Authentication => self.auth_pane(ui),
             Section::JumpHost => self.jump_host_pane(ui, store),
             Section::Tunnels => self.tunnels_pane(ui),
+            Section::Session => self.session_pane(ui),
+            Section::Recording => self.recording_pane(ui),
         }
+    }
+
+    fn recording_pane(&mut self, ui: &mut egui::Ui) {
+        self.pane_header(
+            ui,
+            "Session Recording",
+            "Capture this session to disk for later review.",
+        );
+        ui.checkbox(
+            &mut self.draft.record_sessions,
+            "Record sessions for this connection",
+        );
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(match self.draft.protocol {
+                Protocol::Ssh => "SSH: server output is saved as asciicast v2 (gzipped).",
+                Protocol::Sftp => "SFTP: operations are saved as JSON Lines (gzipped).",
+                _ => "",
+            })
+            .weak(),
+        );
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(
+                "Recordings are plaintext on disk. Do not enable for sessions that may contain secrets you don't want persisted.",
+            )
+            .small()
+            .weak(),
+        );
+    }
+
+    fn session_pane(&mut self, ui: &mut egui::Ui) {
+        self.pane_header(
+            ui,
+            "Session",
+            "Keepalive, X11 forwarding, in-session commands, and local pre/post scripts.",
+        );
+
+        ui.label(RichText::new("Keepalive").strong());
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.label("Interval (seconds, 0 = disabled):");
+            ui.add(egui::DragValue::new(&mut self.draft.keepalive_secs).range(0..=3600));
+        });
+        ui.label(
+            RichText::new(
+                "Sends SSH keepalive messages at this interval. Helps keep NAT/firewall sessions alive.",
+            )
+            .small()
+            .weak(),
+        );
+
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(10.0);
+
+        ui.label(RichText::new("X11 Forwarding").strong());
+        ui.add_space(2.0);
+        ui.checkbox(
+            &mut self.draft.x11_forwarding,
+            "Enable X11 forwarding",
+        );
+        ui.label(
+            RichText::new(
+                "Forwards X11 traffic to your local X server. Requires XQuartz on macOS, an X server on Linux, or VcXsrv/Xming on Windows.",
+            )
+            .small()
+            .weak(),
+        );
+
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(10.0);
+
+        ui.label(RichText::new("Custom Commands").strong());
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new("Commands to run inside the shell after the session starts. One per line.")
+                .small()
+                .weak(),
+        );
+        ui.add_space(4.0);
+        ui.add(
+            TextEdit::multiline(&mut self.remote_commands_buf)
+                .desired_rows(4)
+                .desired_width(f32::INFINITY)
+                .hint_text("e.g. cd /var/log\nsudo -i"),
+        );
+
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(10.0);
+
+        ui.label(RichText::new("Local Scripts").strong());
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new(
+                "Run on the local machine. Interpreted by `sh -c` on Unix / `cmd /c` on Windows. Environment: ESH_HOST, ESH_PORT, ESH_USER, ESH_NAME.",
+            )
+            .small()
+            .weak(),
+        );
+        ui.add_space(6.0);
+
+        script_row(
+            ui,
+            "Before connect (blocking)",
+            "Runs before the SSH handshake. Non-zero exit aborts the connection.",
+            &mut self.draft.before_script,
+            "before_script",
+        );
+        ui.add_space(8.0);
+        script_row(
+            ui,
+            "After connected (async)",
+            "Runs after the shell is ready. Non-blocking.",
+            &mut self.draft.after_connect_script,
+            "after_connect_script",
+        );
+        ui.add_space(8.0);
+        script_row(
+            ui,
+            "After closed (async)",
+            "Runs after the session ends.",
+            &mut self.draft.after_close_script,
+            "after_close_script",
+        );
     }
 
     fn pane_header(&self, ui: &mut egui::Ui, title: &str, hint: &str) {
@@ -258,6 +409,32 @@ fn form_row(ui: &mut egui::Ui, label: &str, add_contents: impl FnOnce(&mut egui:
         });
     });
     ui.add_space(8.0);
+}
+
+fn script_row(
+    ui: &mut egui::Ui,
+    title: &str,
+    hint: &str,
+    slot: &mut Option<String>,
+    salt: &str,
+) {
+    ui.label(RichText::new(title).strong());
+    ui.label(RichText::new(hint).small().weak());
+    let mut text = slot.clone().unwrap_or_default();
+    let resp = ui.add(
+        TextEdit::multiline(&mut text)
+            .id_salt(salt)
+            .desired_rows(2)
+            .desired_width(f32::INFINITY)
+            .hint_text("Shell command(s)"),
+    );
+    if resp.changed() {
+        *slot = if text.trim().is_empty() {
+            None
+        } else {
+            Some(text)
+        };
+    }
 }
 
 impl EditConnectionDialog {
@@ -682,5 +859,11 @@ impl EditConnectionDialog {
                 },
             },
         };
+        self.draft.remote_commands = self
+            .remote_commands_buf
+            .lines()
+            .map(|s| s.trim_end().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
     }
 }

@@ -1,5 +1,8 @@
 use alacritty_terminal::index::Side;
-use egui::{Color32, FontFamily, FontId, Key, Modifiers, Pos2, Rect, Sense, Stroke, TextStyle, Ui, Vec2};
+use egui::{
+    Area, Color32, CornerRadius, FontFamily, FontId, Frame, Key, Modifiers, Order, Pos2, Rect,
+    Sense, Stroke, TextEdit, TextStyle, Ui, Vec2,
+};
 
 use super::TerminalEmulator;
 
@@ -8,7 +11,7 @@ pub struct TerminalView<'a> {
 }
 
 impl<'a> TerminalView<'a> {
-    pub fn show(self, ui: &mut Ui) {
+    pub fn show(mut self, ui: &mut Ui) {
         let font_id = FontId::new(13.0, FontFamily::Monospace);
         let row_height = ui
             .fonts_mut(|f| f.row_height(&font_id))
@@ -19,6 +22,10 @@ impl<'a> TerminalView<'a> {
         let cols = ((avail.x / cell_width).floor() as u16).max(20);
         let rows = ((avail.y / row_height).floor() as u16).max(5);
         self.emulator.resize(cols, rows);
+
+        if self.emulator.find.open {
+            self.emulator.recompute_find_matches();
+        }
 
         let snapshot = self.emulator.snapshot();
         let (response, painter) = ui.allocate_painter(
@@ -77,6 +84,34 @@ impl<'a> TerminalView<'a> {
                 Vec2::new(cell_width, row_height),
             );
             painter.rect_stroke(cursor_rect, 0.0, Stroke::new(1.5, Color32::from_rgb(0xea, 0xea, 0xea)), egui::StrokeKind::Inside);
+        }
+
+        if self.emulator.find.open && !self.emulator.find.matches.is_empty() {
+            let display_offset = self.emulator.display_offset() as i32;
+            let match_bg = Color32::from_rgba_unmultiplied(255, 220, 0, 60);
+            let current_bg = Color32::from_rgba_unmultiplied(255, 140, 0, 160);
+            let current_idx = self.emulator.find.current;
+            let matches_snapshot: Vec<_> = self.emulator.find.matches.clone();
+            for (i, m) in matches_snapshot.iter().enumerate() {
+                let start = m.start();
+                let end = m.end();
+                if start.line != end.line {
+                    continue;
+                }
+                let viewport_row = start.line.0 + display_offset;
+                if viewport_row < 0 || viewport_row >= rows as i32 {
+                    continue;
+                }
+                let y = origin.y + viewport_row as f32 * row_height;
+                let x0 = origin.x + start.column.0 as f32 * cell_width;
+                let x1 = origin.x + (end.column.0 + 1) as f32 * cell_width;
+                let color = if Some(i) == current_idx { current_bg } else { match_bg };
+                painter.rect_filled(
+                    Rect::from_min_max(Pos2::new(x0, y), Pos2::new(x1, y + row_height)),
+                    0.0,
+                    color,
+                );
+            }
         }
 
         if snapshot.display_offset > 0 {
@@ -149,6 +184,15 @@ impl<'a> TerminalView<'a> {
             }
         }
 
+        let open_sc = egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
+        if response.has_focus() && ui.ctx().input_mut(|i| i.consume_shortcut(&open_sc)) {
+            self.emulator.open_find();
+        }
+
+        if self.emulator.find.open {
+            self.render_find_bar(ui, response.rect);
+        }
+
         if response.has_focus() {
             let (events, mods) = ui.ctx().input(|input| (input.events.clone(), input.modifiers));
             let mut buf: Vec<u8> = Vec::new();
@@ -211,6 +255,107 @@ impl<'a> TerminalView<'a> {
                 self.emulator.scroll_to_bottom();
                 self.emulator.send_input(buf);
             }
+        }
+    }
+
+    fn render_find_bar(&mut self, ui: &mut Ui, term_rect: Rect) {
+        let anchor = Pos2::new(term_rect.max.x - 12.0, term_rect.min.y + 8.0);
+        let just_opened = std::mem::replace(&mut self.emulator.find.just_opened, false);
+        let mut close_requested = false;
+        let mut goto_next = false;
+        let mut goto_prev = false;
+        let mut edit_focused = false;
+
+        let enter = ui.ctx().input(|i| i.key_pressed(Key::Enter));
+        let shift_held = ui.ctx().input(|i| i.modifiers.shift);
+
+        let pane_salt: usize = self.emulator as *const _ as usize;
+        let area_id = egui::Id::new(("terminal-find-bar", pane_salt));
+        let edit_id = egui::Id::new(("terminal-find-textedit", pane_salt));
+
+        Area::new(area_id)
+            .order(Order::Foreground)
+            .fixed_pos(anchor - Vec2::new(340.0, 0.0))
+            .show(ui.ctx(), |ui| {
+                Frame::popup(ui.style())
+                    .fill(Color32::from_rgb(0x20, 0x20, 0x24))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(0x44, 0x44, 0x48)))
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(6.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let edit = TextEdit::singleline(&mut self.emulator.find.query)
+                                .desired_width(220.0)
+                                .hint_text("Find")
+                                .font(TextStyle::Monospace);
+                            let resp = ui.add(edit.id(edit_id));
+                            edit_focused = resp.has_focus();
+                            if just_opened {
+                                resp.request_focus();
+                                edit_focused = true;
+                                if let Some(mut state) = TextEdit::load_state(ui.ctx(), edit_id) {
+                                    let end = self.emulator.find.query.len();
+                                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                                        egui::text::CCursor::new(0),
+                                        egui::text::CCursor::new(end),
+                                    )));
+                                    state.store(ui.ctx(), edit_id);
+                                }
+                            }
+                            if resp.changed() {
+                                self.emulator.recompute_find_matches();
+                                self.emulator.find_scroll_to_current();
+                            }
+                            if resp.has_focus() && enter {
+                                if shift_held { goto_prev = true; } else { goto_next = true; }
+                            }
+
+                            let total = self.emulator.find.matches.len();
+                            let idx = self.emulator.find.current.map(|i| i + 1).unwrap_or(0);
+                            let counter = if total == 0 {
+                                "0/0".to_string()
+                            } else {
+                                format!("{}/{}", idx, total)
+                            };
+                            ui.label(
+                                egui::RichText::new(counter)
+                                    .monospace()
+                                    .color(Color32::from_rgb(0xa0, 0xa0, 0xa0)),
+                            );
+
+                            if ui.small_button("Prev").on_hover_text("Previous match (Shift+Enter)").clicked() {
+                                goto_prev = true;
+                            }
+                            if ui.small_button("Next").on_hover_text("Next match (Enter)").clicked() {
+                                goto_next = true;
+                            }
+                            if ui.small_button("x").on_hover_text("Close (Esc)").clicked() {
+                                close_requested = true;
+                            }
+                        });
+                    });
+            });
+
+        if edit_focused {
+            let g_sc_next = egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
+            let g_sc_prev = egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::G);
+            if ui.ctx().input_mut(|i| i.consume_shortcut(&g_sc_prev)) {
+                goto_prev = true;
+            } else if ui.ctx().input_mut(|i| i.consume_shortcut(&g_sc_next)) {
+                goto_next = true;
+            }
+            if ui.ctx().input(|i| i.key_pressed(Key::Escape)) {
+                close_requested = true;
+            }
+        }
+
+        if goto_next {
+            self.emulator.find_goto(true);
+        } else if goto_prev {
+            self.emulator.find_goto(false);
+        }
+        if close_requested {
+            self.emulator.close_find();
         }
     }
 }

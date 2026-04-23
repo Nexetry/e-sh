@@ -119,6 +119,20 @@ pub struct Connection {
     pub tunnels: Vec<Tunnel>,
     #[serde(default)]
     pub jump_chain: Vec<Uuid>,
+    #[serde(default)]
+    pub record_sessions: bool,
+    #[serde(default)]
+    pub x11_forwarding: bool,
+    #[serde(default)]
+    pub keepalive_secs: u32,
+    #[serde(default)]
+    pub remote_commands: Vec<String>,
+    #[serde(default)]
+    pub before_script: Option<String>,
+    #[serde(default)]
+    pub after_connect_script: Option<String>,
+    #[serde(default)]
+    pub after_close_script: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -139,6 +153,20 @@ struct ConnectionRaw {
     jump_chain: Vec<Uuid>,
     #[serde(default)]
     jump_via: Option<Uuid>,
+    #[serde(default)]
+    record_sessions: bool,
+    #[serde(default)]
+    x11_forwarding: bool,
+    #[serde(default)]
+    keepalive_secs: u32,
+    #[serde(default)]
+    remote_commands: Vec<String>,
+    #[serde(default)]
+    before_script: Option<String>,
+    #[serde(default)]
+    after_connect_script: Option<String>,
+    #[serde(default)]
+    after_close_script: Option<String>,
 }
 
 impl From<ConnectionRaw> for Connection {
@@ -160,6 +188,13 @@ impl From<ConnectionRaw> for Connection {
             auth: raw.auth,
             tunnels: raw.tunnels,
             jump_chain,
+            record_sessions: raw.record_sessions,
+            x11_forwarding: raw.x11_forwarding,
+            keepalive_secs: raw.keepalive_secs,
+            remote_commands: raw.remote_commands,
+            before_script: raw.before_script,
+            after_connect_script: raw.after_connect_script,
+            after_close_script: raw.after_close_script,
         }
     }
 }
@@ -177,6 +212,13 @@ impl Connection {
             auth: AuthMethod::default(),
             tunnels: Vec::new(),
             jump_chain: Vec::new(),
+            record_sessions: false,
+            x11_forwarding: false,
+            keepalive_secs: 0,
+            remote_commands: Vec::new(),
+            before_script: None,
+            after_connect_script: None,
+            after_close_script: None,
         }
     }
 

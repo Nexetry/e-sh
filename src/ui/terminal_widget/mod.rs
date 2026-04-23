@@ -3,6 +3,8 @@ pub use view::TerminalView;
 
 use std::sync::Arc;
 
+use std::ops::RangeInclusive;
+
 use alacritty_terminal::event::{Event as TermEvent, EventListener};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
@@ -40,6 +42,28 @@ pub struct TerminalEmulator {
     pub cols: u16,
     pub rows: u16,
     pub closed: Option<String>,
+    pub find: FindState,
+}
+
+pub type FindMatch = RangeInclusive<Point>;
+
+#[derive(Default)]
+pub struct FindState {
+    pub open: bool,
+    pub query: String,
+    pub just_opened: bool,
+    pub matches: Vec<FindMatch>,
+    pub current: Option<usize>,
+    pub last_key: Option<String>,
+}
+
+impl FindState {
+    pub fn close(&mut self) {
+        self.open = false;
+        self.matches.clear();
+        self.current = None;
+        self.last_key = None;
+    }
 }
 
 impl TerminalEmulator {
@@ -60,6 +84,7 @@ impl TerminalEmulator {
             cols,
             rows,
             closed: None,
+            find: FindState::default(),
         }
     }
 
@@ -180,6 +205,157 @@ impl TerminalEmulator {
 
     pub fn selection_text(&self) -> Option<String> {
         self.term.lock().selection_to_string()
+    }
+
+    pub fn open_find(&mut self) {
+        self.find.open = true;
+        self.find.just_opened = true;
+    }
+
+    pub fn close_find(&mut self) {
+        self.find.close();
+    }
+
+    pub fn recompute_find_matches(&mut self) {
+        let key = self.find.query.clone();
+        if self.find.last_key.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        self.find.last_key = Some(key.clone());
+        self.rebuild_find_matches(&key);
+        if !self.find.matches.is_empty() {
+            self.find.current = Some(0);
+        }
+    }
+
+    pub fn refresh_find_matches(&mut self) {
+        if !self.find.open || self.find.query.is_empty() {
+            return;
+        }
+        let key = self.find.query.clone();
+        let prev_anchor = self
+            .find
+            .current
+            .and_then(|i| self.find.matches.get(i))
+            .map(|r| *r.start());
+        self.rebuild_find_matches(&key);
+        self.find.current = if self.find.matches.is_empty() {
+            None
+        } else if let Some(anchor) = prev_anchor {
+            Some(
+                self.find
+                    .matches
+                    .iter()
+                    .position(|r| *r.start() == anchor)
+                    .unwrap_or_else(|| {
+                        self.find
+                            .matches
+                            .iter()
+                            .rposition(|r| *r.start() <= anchor)
+                            .unwrap_or(0)
+                    }),
+            )
+        } else {
+            Some(0)
+        };
+    }
+
+    fn rebuild_find_matches(&mut self, key: &str) {
+        self.find.matches.clear();
+        self.find.current = None;
+        if key.is_empty() {
+            return;
+        }
+
+        let case_insensitive = !key.chars().any(|c| c.is_uppercase());
+        let needle: String = if case_insensitive {
+            key.to_lowercase()
+        } else {
+            key.to_string()
+        };
+
+        let term = self.term.lock();
+        let grid = term.grid();
+        let top = grid.topmost_line().0;
+        let bottom = grid.bottommost_line().0;
+        let cols = grid.columns();
+
+        for line_idx in top..=bottom {
+            let line = Line(line_idx);
+            let row = &grid[line];
+            let mut line_text = String::with_capacity(cols);
+            let mut char_to_col: Vec<usize> = Vec::with_capacity(cols);
+            for c in 0..cols {
+                let cell = &row[Column(c)];
+                if cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                {
+                    continue;
+                }
+                if case_insensitive {
+                    for lower in cell.c.to_lowercase() {
+                        line_text.push(lower);
+                        char_to_col.push(c);
+                    }
+                } else {
+                    line_text.push(cell.c);
+                    char_to_col.push(c);
+                }
+            }
+
+            let needle_char_len = needle.chars().count();
+            let mut search_from = 0usize;
+            while let Some(rel) = line_text[search_from..].find(&needle) {
+                let byte_start = search_from + rel;
+                let char_start = line_text[..byte_start].chars().count();
+                let char_end = char_start + needle_char_len.saturating_sub(1);
+                if let (Some(&sc), Some(&ec)) =
+                    (char_to_col.get(char_start), char_to_col.get(char_end))
+                {
+                    self.find.matches.push(
+                        Point::new(line, Column(sc))..=Point::new(line, Column(ec)),
+                    );
+                }
+                search_from = byte_start + needle.len().max(1);
+                if search_from >= line_text.len() {
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn find_goto(&mut self, next: bool) {
+        if self.find.matches.is_empty() {
+            return;
+        }
+        let n = self.find.matches.len();
+        let idx = match self.find.current {
+            Some(i) => {
+                if next {
+                    (i + 1) % n
+                } else {
+                    (i + n - 1) % n
+                }
+            }
+            None => 0,
+        };
+        self.find.current = Some(idx);
+        let point = *self.find.matches[idx].start();
+        self.term.lock().scroll_to_point(point);
+    }
+
+    pub fn find_scroll_to_current(&mut self) {
+        if let Some(idx) = self.find.current
+            && let Some(m) = self.find.matches.get(idx)
+        {
+            let point = *m.start();
+            self.term.lock().scroll_to_point(point);
+        }
+    }
+
+    pub fn display_offset(&self) -> usize {
+        self.term.lock().grid().display_offset()
     }
 }
 

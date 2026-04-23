@@ -12,8 +12,10 @@ pub struct TreeAction {
     pub open: Option<Uuid>,
     pub open_sftp: Option<Uuid>,
     pub edit: Option<Uuid>,
+    pub duplicate: Option<Uuid>,
     pub delete: Option<Uuid>,
     pub new_connection: bool,
+    pub open_recordings: bool,
 }
 
 impl<'a> ConnectionTree<'a> {
@@ -32,58 +34,69 @@ impl<'a> ConnectionTree<'a> {
             });
         });
         ui.separator();
-        ScrollArea::vertical().show(ui, |ui| {
-            let mut groups: std::collections::BTreeMap<String, Vec<&_>> = Default::default();
-            for c in &self.store.connections {
-                groups
-                    .entry(c.group.clone().unwrap_or_else(|| "Default".to_string()))
-                    .or_default()
-                    .push(c);
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            if ui
+                .selectable_label(false, "Recordings")
+                .on_hover_text("Browse captured SSH and SFTP sessions")
+                .clicked()
+            {
+                action.open_recordings = true;
             }
-            if groups.is_empty() {
-                ui.weak("No saved connections.");
-                ui.weak("Click ＋ above to add one.");
-            }
-            for (group, items) in groups {
-                CollapsingHeader::new(group)
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        for c in items {
-                            let label = format!("{}  ·  {}", c.name, c.display_address());
-                            let resp = ui
-                                .selectable_label(false, label)
-                                .on_hover_text(format!(
-                                    "{} {}",
-                                    c.protocol.label(),
-                                    c.display_address()
-                                ));
-                            if resp.double_clicked() {
-                                action.open = Some(c.id);
-                            }
-                            resp.context_menu(|ui| {
-                                if ui.button("Open").clicked() {
+            ui.separator();
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ScrollArea::vertical().show(ui, |ui| {
+                    let mut groups: std::collections::BTreeMap<String, Vec<&_>> =
+                        Default::default();
+                    for c in &self.store.connections {
+                        groups
+                            .entry(c.group.clone().unwrap_or_else(|| "Default".to_string()))
+                            .or_default()
+                            .push(c);
+                    }
+                    if groups.is_empty() {
+                        ui.weak("No saved connections.");
+                        ui.weak("Click ＋ above to add one.");
+                    }
+                    for (group, items) in groups {
+                        CollapsingHeader::new(group).default_open(true).show(ui, |ui| {
+                            for c in items {
+                                let label = format!("{}  ·  {}", c.name, c.display_address());
+                                let resp = ui.selectable_label(false, label).on_hover_text(
+                                    format!("{} {}", c.protocol.label(), c.display_address()),
+                                );
+                                if resp.double_clicked() {
                                     action.open = Some(c.id);
-                                    ui.close();
                                 }
-                                if matches!(c.protocol, Protocol::Ssh | Protocol::Sftp) {
-                                    if ui.button("Open SFTP").clicked() {
-                                        action.open_sftp = Some(c.id);
+                                resp.context_menu(|ui| {
+                                    if ui.button("Open").clicked() {
+                                        action.open = Some(c.id);
                                         ui.close();
                                     }
-                                }
-                                if ui.button("Edit…").clicked() {
-                                    action.edit = Some(c.id);
-                                    ui.close();
-                                }
-                                ui.separator();
-                                if ui.button("Delete").clicked() {
-                                    action.delete = Some(c.id);
-                                    ui.close();
-                                }
-                            });
-                        }
-                    });
-            }
+                                    if matches!(c.protocol, Protocol::Ssh | Protocol::Sftp) {
+                                        if ui.button("Open SFTP").clicked() {
+                                            action.open_sftp = Some(c.id);
+                                            ui.close();
+                                        }
+                                    }
+                                    if ui.button("Edit").clicked() {
+                                        action.edit = Some(c.id);
+                                        ui.close();
+                                    }
+                                    if ui.button("Duplicate").clicked() {
+                                        action.duplicate = Some(c.id);
+                                        ui.close();
+                                    }
+                                    ui.separator();
+                                    if ui.button("Delete").clicked() {
+                                        action.delete = Some(c.id);
+                                        ui.close();
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+            });
         });
         action
     }
