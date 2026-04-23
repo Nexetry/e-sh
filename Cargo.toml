@@ -1,6 +1,6 @@
 [package]
 name = "e-sh"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A unified cross-platform remote connection manager (SSH, SFTP) built in Rust with egui."
 license = "MIT OR Apache-2.0"
@@ -48,7 +48,11 @@ base64 = "0.22"
 nucleo-matcher = "0.3"
 flate2 = "1"
 serde_json = "1"
-chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+chrono = { version = "0.4", default-features = false, features = [
+    "std",
+    "clock",
+    "serde",
+] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -63,9 +67,21 @@ copyright = "2026, nexetry"
 section = "net"
 priority = "optional"
 assets = [
-    ["target/release/e-sh", "usr/bin/", "755"],
-    ["README.md", "usr/share/doc/e-sh/README.md", "644"],
-    ["assets/e-sh.desktop", "usr/share/applications/", "644"],
+    [
+        "target/release/e-sh",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "README.md",
+        "usr/share/doc/e-sh/README.md",
+        "644",
+    ],
+    [
+        "assets/e-sh.desktop",
+        "usr/share/applications/",
+        "644",
+    ],
 ]
 extended-description = """\
 e-sh is a single-binary, keyboard-first remote connection manager for SSH \
