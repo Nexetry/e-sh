@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::core::connection::{
     AuthMethod, Connection, ConnectionStore, Protocol, Tunnel, TunnelKind,
 };
+use crate::ui::password_field::MaskedBuffer;
 
 pub struct EditConnectionDialog {
     pub open: bool,
@@ -360,16 +361,16 @@ impl EditConnectionDialog {
             }
             AuthKind::Password => {
                 form_row(ui, "Password", |ui| {
+                    let mut buf = MaskedBuffer::new(&mut self.password);
                     ui.add(
-                        TextEdit::singleline(&mut self.password)
-                            .password(true)
+                        TextEdit::singleline(&mut buf)
                             .desired_width(360.0),
                     );
                 });
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(
-                        "Stored in your OS keyring (macOS Keychain / Windows Credential Manager / Secret Service).",
+                        "Encrypted with your master password and stored in secrets.enc.toml.",
                     )
                     .small()
                     .weak(),
@@ -399,9 +400,9 @@ impl EditConnectionDialog {
                     });
                 });
                 form_row(ui, "Passphrase", |ui| {
+                    let mut buf = MaskedBuffer::new(&mut self.key_passphrase);
                     ui.add(
-                        TextEdit::singleline(&mut self.key_passphrase)
-                            .password(true)
+                        TextEdit::singleline(&mut buf)
                             .desired_width(360.0)
                             .hint_text("Leave empty if key is unencrypted"),
                     );

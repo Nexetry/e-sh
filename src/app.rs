@@ -1,3 +1,4 @@
+use age::secrecy::SecretString;
 use eframe::{App, CreationContext, Frame};
 use egui::{CentralPanel, Panel, Ui};
 use egui_dock::{DockArea, DockState, Style};
@@ -9,23 +10,39 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use uuid::Uuid;
 
 use e_sh::config::host_keys::{HostKeyPrompt, HostKeyStore};
-use e_sh::config::store::{ConfigPaths, forget_secrets, load_connections, save_connections};
-use e_sh::core::connection::{Connection, ConnectionStore, Protocol};
+use e_sh::config::secrets::SecretStore;
+use e_sh::config::store::{
+    ConfigPaths, forget_secrets, hydrate_after_unlock, load_connections, save_connections,
+};
+use e_sh::core::connection::{AuthMethod, Connection, ConnectionStore, Protocol};
 use e_sh::proto::sftp::spawn_sftp_session;
 use e_sh::proto::ssh::{HostKeyContext, spawn_session};
 use e_sh::ui::connection_tree::ConnectionTree;
 use e_sh::ui::dock::{EshTab, EshTabViewer, TerminalTab};
 use e_sh::ui::edit_dialog::EditConnectionDialog;
 use e_sh::ui::host_key_prompt::{HostKeyPromptResult, HostKeyPromptUi};
+use e_sh::ui::master_password_prompt::{
+    MasterPasswordMode, MasterPasswordPromptUi, MasterPasswordResult,
+};
 use e_sh::ui::sftp_tab::SftpTab;
 use e_sh::ui::status_bar::StatusBar;
 use e_sh::ui::terminal_widget::TerminalEmulator;
 use e_sh::ui::toast::Toaster;
 
+enum PendingAction {
+    Open(Uuid),
+    OpenSftp(Uuid),
+    SaveAndClose,
+    Forget(Connection),
+}
+
 pub struct EshApp {
     rt: Handle,
     paths: Arc<ConfigPaths>,
     store: ConnectionStore,
+    secrets: Option<SecretStore>,
+    master_prompt: Option<MasterPasswordPromptUi>,
+    pending: VecDeque<PendingAction>,
     host_keys: Arc<Mutex<HostKeyStore>>,
     host_key_prompt_tx: UnboundedSender<HostKeyPrompt>,
     host_key_prompt_rx: UnboundedReceiver<HostKeyPrompt>,
@@ -56,10 +73,21 @@ impl EshApp {
 
         let (host_key_prompt_tx, host_key_prompt_rx) = unbounded_channel::<HostKeyPrompt>();
 
+        let master_prompt = if SecretStore::file_exists(&paths.config_dir) {
+            Some(MasterPasswordPromptUi::new(MasterPasswordMode::Unlock))
+        } else if store.connections.iter().any(connection_needs_secret) {
+            Some(MasterPasswordPromptUi::new(MasterPasswordMode::Create))
+        } else {
+            None
+        };
+
         Self {
             rt,
             paths,
             store,
+            secrets: None,
+            master_prompt,
+            pending: VecDeque::new(),
             host_keys: Arc::new(Mutex::new(host_keys)),
             host_key_prompt_tx,
             host_key_prompt_rx,
@@ -72,10 +100,75 @@ impl EshApp {
         }
     }
 
+    fn ensure_secrets_unlocked(&mut self, mode: MasterPasswordMode) -> bool {
+        if self.secrets.is_some() {
+            return true;
+        }
+        if self.master_prompt.is_none() {
+            self.master_prompt = Some(MasterPasswordPromptUi::new(mode));
+        }
+        false
+    }
+
+    fn try_unlock_or_create(&mut self, password: String) -> Result<(), String> {
+        let secret = SecretString::from(password);
+        let mode = self
+            .master_prompt
+            .as_ref()
+            .map(|p| p.mode)
+            .unwrap_or(MasterPasswordMode::Create);
+        let store = match mode {
+            MasterPasswordMode::Unlock => SecretStore::open(&self.paths.config_dir, secret)
+                .map_err(|e| e.to_string())?,
+            MasterPasswordMode::Create => SecretStore::create(&self.paths.config_dir, secret)
+                .map_err(|e| e.to_string())?,
+        };
+        self.secrets = Some(store);
+        if let Some(secrets) = self.secrets.as_mut()
+            && let Err(err) = hydrate_after_unlock(&self.paths, &mut self.store, secrets)
+        {
+            tracing::warn!(?err, "secret hydration after unlock failed");
+        }
+        self.master_prompt = None;
+        self.toaster.success(
+            match mode {
+                MasterPasswordMode::Unlock => "Secrets unlocked",
+                MasterPasswordMode::Create => "Master password set",
+            },
+            "",
+        );
+        self.run_pending();
+        Ok(())
+    }
+
+    fn run_pending(&mut self) {
+        while let Some(action) = self.pending.pop_front() {
+            match action {
+                PendingAction::Open(id) => self.open_connection(id),
+                PendingAction::OpenSftp(id) => self.open_sftp_tab(id),
+                PendingAction::SaveAndClose => self.persist(),
+                PendingAction::Forget(conn) => {
+                    if let Some(secrets) = self.secrets.as_mut() {
+                        forget_secrets(&conn, secrets);
+                    }
+                }
+            }
+        }
+    }
+
     fn open_connection(&mut self, id: Uuid) {
         let Some(conn) = self.store.find(id).cloned() else {
             return;
         };
+        if connection_needs_secret(&conn) && self.secrets.is_none() {
+            self.pending.push_back(PendingAction::Open(id));
+            self.ensure_secrets_unlocked(if SecretStore::file_exists(&self.paths.config_dir) {
+                MasterPasswordMode::Unlock
+            } else {
+                MasterPasswordMode::Create
+            });
+            return;
+        }
         if matches!(conn.protocol, Protocol::Sftp) {
             self.open_sftp_tab(id);
             return;
@@ -106,14 +199,25 @@ impl EshApp {
         });
         self.push_tab(tab);
         self.status = format!("Opened {}@{}", conn.username, conn.host);
-        self.toaster
-            .info("Connecting", format!("{}@{}:{}", conn.username, conn.host, conn.port));
+        self.toaster.info(
+            "Connecting",
+            format!("{}@{}:{}", conn.username, conn.host, conn.port),
+        );
     }
 
     fn open_sftp_tab(&mut self, id: Uuid) {
         let Some(conn) = self.store.find(id).cloned() else {
             return;
         };
+        if connection_needs_secret(&conn) && self.secrets.is_none() {
+            self.pending.push_back(PendingAction::OpenSftp(id));
+            self.ensure_secrets_unlocked(if SecretStore::file_exists(&self.paths.config_dir) {
+                MasterPasswordMode::Unlock
+            } else {
+                MasterPasswordMode::Create
+            });
+            return;
+        }
         let chain = match self.store.resolve_jump_chain(id) {
             Ok(c) => c,
             Err(e) => {
@@ -167,9 +271,26 @@ impl EshApp {
     }
 
     fn persist(&mut self) {
-        if let Err(e) = save_connections(&self.paths, &self.store) {
-            self.status = format!("Save failed: {e}");
-            self.toaster.error("Save failed", e.to_string());
+        let needs_secret = self.store.connections.iter().any(connection_needs_secret);
+        if needs_secret && self.secrets.is_none() {
+            self.pending.push_back(PendingAction::SaveAndClose);
+            self.ensure_secrets_unlocked(if SecretStore::file_exists(&self.paths.config_dir) {
+                MasterPasswordMode::Unlock
+            } else {
+                MasterPasswordMode::Create
+            });
+            return;
+        }
+        if let Some(secrets) = self.secrets.as_mut() {
+            if let Err(e) = save_connections(&self.paths, &self.store, secrets) {
+                self.status = format!("Save failed: {e}");
+                self.toaster.error("Save failed", e.to_string());
+            }
+        } else {
+            if let Err(e) = save_connections_no_secrets(&self.paths, &self.store) {
+                self.status = format!("Save failed: {e}");
+                self.toaster.error("Save failed", e.to_string());
+            }
         }
     }
 
@@ -244,7 +365,12 @@ impl App for EshApp {
                 }
                 if let Some(id) = action.delete {
                     if let Some(removed) = self.store.remove(id) {
-                        forget_secrets(&removed);
+                        if let Some(secrets) = self.secrets.as_mut() {
+                            forget_secrets(&removed, secrets);
+                        } else {
+                            self.pending
+                                .push_back(PendingAction::Forget(removed.clone()));
+                        }
                         self.persist();
                         self.status = "Deleted connection".to_string();
                         self.toaster.warn("Deleted", removed.name);
@@ -255,6 +381,23 @@ impl App for EshApp {
         let ctx = ui.ctx().clone();
 
         self.poll_session_errors();
+
+        if let Some(prompt) = self.master_prompt.as_mut() {
+            match prompt.show(&ctx) {
+                MasterPasswordResult::Pending => {}
+                MasterPasswordResult::Submit(pw) => {
+                    if let Err(err) = self.try_unlock_or_create(pw) {
+                        if let Some(p) = self.master_prompt.as_mut() {
+                            p.error = Some(err);
+                            p.password.clear();
+                            p.confirm.clear();
+                        }
+                    }
+                }
+            }
+            ctx.request_repaint();
+            return;
+        }
 
         self.drain_host_key_prompts();
         if let Some(prompt) = self.pending_host_key_prompts.front() {
@@ -269,16 +412,13 @@ impl App for EshApp {
                         self.status = format!("Host key decision for {host_id}: {decision:?}");
                         match decision {
                             e_sh::config::host_keys::HostKeyDecision::Reject => {
-                                self.toaster
-                                    .warn("Host key rejected", host_id);
+                                self.toaster.warn("Host key rejected", host_id);
                             }
                             e_sh::config::host_keys::HostKeyDecision::AcceptOnce => {
-                                self.toaster
-                                    .info("Host key accepted (once)", host_id);
+                                self.toaster.info("Host key accepted (once)", host_id);
                             }
                             e_sh::config::host_keys::HostKeyDecision::AcceptAndSave => {
-                                self.toaster
-                                    .success("Host key saved", host_id);
+                                self.toaster.success("Host key saved", host_id);
                             }
                         }
                     }
@@ -322,6 +462,35 @@ impl App for EshApp {
 
         self.toaster.show(&ctx);
     }
+}
+
+fn connection_needs_secret(conn: &Connection) -> bool {
+    match &conn.auth {
+        AuthMethod::Password { password } => !password.is_empty(),
+        AuthMethod::PublicKey { passphrase, .. } => {
+            passphrase.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+        }
+        AuthMethod::Agent => false,
+    }
+}
+
+fn save_connections_no_secrets(paths: &ConfigPaths, store: &ConnectionStore) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use std::fs;
+    fs::create_dir_all(&paths.config_dir)
+        .with_context(|| format!("creating {}", paths.config_dir.display()))?;
+    let mut sanitized = store.clone();
+    for conn in &mut sanitized.connections {
+        match &mut conn.auth {
+            AuthMethod::Password { password } => password.clear(),
+            AuthMethod::PublicKey { passphrase, .. } => *passphrase = None,
+            AuthMethod::Agent => {}
+        }
+    }
+    let text = toml::to_string_pretty(&sanitized).context("serializing connections")?;
+    fs::write(&paths.connections_file, text)
+        .with_context(|| format!("writing {}", paths.connections_file.display()))?;
+    Ok(())
 }
 
 fn whoami_user() -> String {

@@ -69,12 +69,15 @@ the keyboard-first, low-overhead feel that power users expect.
   - Folder / file / symlink icons; size auto-formatted (B / K / M / G / T)
 
 - **Credential storage**:
-  - All passwords and key passphrases live in the OS-native secret store
-    (macOS Keychain, Windows Credential Manager, Linux Secret Service)
+  - Passwords and key passphrases are encrypted with a **master password** you set
+    on first launch and stored in `secrets.enc.toml` next to your other config
+  - Encryption is `age` passphrase mode (scrypt KDF + ChaCha20-Poly1305); the
+    master password never touches disk and is held in memory only for the
+    lifetime of the running app
   - `connections.toml` is sanitized on every save: secrets never touch disk in
     plaintext
-  - Legacy plaintext `connections.toml` files are migrated transparently on
-    first load
+  - Legacy plaintext `connections.toml` files are migrated transparently into
+    the encrypted store on first unlock
 
 ### Planned
 
@@ -86,7 +89,7 @@ the keyboard-first, low-overhead feel that power users expect.
 
 | Protocol | Purpose                       | Status                                                                                                                        |
 | -------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| SSH      | Interactive remote shell      | **Working** (password + pubkey + agent, TOFU, tunnels `-L`/`-R`/`-D`, chained ProxyJump, scrollback + copy/paste, OS keyring) |
+| SSH      | Interactive remote shell      | **Working** (password + pubkey + agent, TOFU, tunnels `-L`/`-R`/`-D`, chained ProxyJump, scrollback + copy/paste, encrypted secret store)  |
 | SFTP     | Secure file transfer / browse | **Working** (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns, cancel)     |
 | RDP      | Remote desktop (Windows)      | Planned                                                                                                                       |
 | VNC      | Remote desktop (generic)      | Planned                                                                                                                       |
@@ -136,7 +139,7 @@ VS Code "Draw.io Integration" extension.
 - **SFTP:** `russh-sftp` `2.1.1`
 - **Terminal emulator:** `alacritty_terminal` `0.26`
 - **File picker:** `rfd` `0.15`
-- **Keyring:** `keyring` `3` (Keychain / Credential Manager / Secret Service)
+- **Encryption:** `age` `0.11` (scrypt + ChaCha20-Poly1305) for the credential store
 - **Config:** TOML via `serde` + `toml`
 - **Paths:** `directories` `6`
 - **Logging:** `tracing` + `tracing-subscriber`
@@ -167,14 +170,39 @@ cargo run --release
 
 The compiled binary will be available at `target/release/e-sh`.
 
+### Release builds
+
+Native, host-only release scripts that produce versioned archives in `dist/`:
+
+```bash
+# macOS (universal arm64+x86_64) or Linux x86_64
+./scripts/build-release.sh
+
+# Windows x86_64 (PowerShell)
+pwsh scripts/build-release.ps1
+```
+
+Output:
+
+- **macOS**: `dist/e-sh-<version>-macos-universal.tar.gz` containing a double-clickable **`e-sh.app`** bundle (universal arm64+x86_64, ad-hoc signed; on first launch macOS may show a Gatekeeper warning — right-click the app → _Open_ to bypass)
+- **Linux**: `dist/e-sh-<version>-linux-x86_64.tar.gz` containing the raw `e-sh` binary
+- **Windows**: `dist/e-sh-<version>-windows-x86_64.zip` containing `e-sh.exe`
+
+Each archive ships with a matching `.sha256` checksum file.
+
+For automated cross-platform release builds on git tag push (`vX.Y.Z`), the
+GitHub Actions workflow at `.github/workflows/release.yml` builds all three
+targets on their native runners (`macos-latest`, `ubuntu-latest`,
+`windows-latest`) and attaches the artifacts to a GitHub Release.
+
 ## Usage
 
 1. Launch `e-sh`.
 2. Click the `+` next to **Connections** in the sidebar to create a new entry.
 3. Fill in name, group, host, port, username, and choose an auth method:
-   - **Password** — type the password directly (saved to OS keyring)
+   - **Password** — type the password directly (encrypted with your master password)
    - **Public key** — type the path or click `...` to browse; supply a passphrase
-     if the key is encrypted (passphrase is saved to OS keyring)
+     if the key is encrypted (passphrase is encrypted with your master password)
    - **SSH agent** — uses your running ssh-agent (`$SSH_AUTH_SOCK`); each loaded
      identity is tried in order. Run `ssh-add` to load keys.
 4. Save. Double-click the connection (or right-click → _Open_) to connect.
@@ -204,12 +232,17 @@ Configuration is stored as TOML under the standard OS config directory:
 
 Files in that directory:
 
-- `connections.toml` — saved connections
+- `connections.toml` — saved connections (sanitized; never contains plaintext secrets)
+- `secrets.enc.toml` — `age`-encrypted password / passphrase store, unlocked at
+  startup with your master password
 - `host_keys.toml` — TOFU host-key store (algorithm + SHA-256 fingerprint + first-seen timestamp)
 
-> Passwords and key passphrases are stored in your OS-native secret store
-> (Keychain / Credential Manager / Secret Service). `connections.toml` only
-> ever holds non-secret metadata.
+> The first time you save a connection that needs a secret, `e-sh` asks you to
+> set a master password. On every subsequent launch it asks you to enter that
+> same password to unlock the encrypted store. The master password is held in
+> memory only for the lifetime of the running app and is never written to disk.
+> If you forget it, the encrypted secrets cannot be recovered — you will need
+> to delete `secrets.enc.toml` and re-enter your credentials.
 
 ## Project Status
 
@@ -232,7 +265,7 @@ persist host keys), but expect breaking changes to config formats and APIs.
 - [x] Per-session tunnel status display (collapsible)
 - [x] Royal-TSX-style edit dialog
 - [x] SSH agent authentication
-- [x] Credential storage via OS keyring
+- [x] Credential storage via `age`-encrypted secret store
 - [x] Terminal scrollback UI + selection / copy / paste
 - [x] SFTP adapter (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns)
 - [ ] Tabbed multi-session UI polish (split panes, drag-to-reorder)
@@ -263,6 +296,18 @@ connection. SSH agent forwarding and X11 forwarding are not yet implemented.
 
 **Q: Is it production ready?**
 No. See [Project Status](#project-status).
+
+**Q: macOS shows an `AutoFill (e-sh)` process in Activity Monitor — is it accessing my Keychain?**
+No. `e-sh` does not link `Security.framework` and does not call any Keychain
+API (credentials are stored in `secrets.enc.toml` encrypted with your master
+password via `age`). The `AutoFill (<AppName>)` process is
+`com.apple.SafariPlatformSupport.Helper.xpc`, a system XPC helper that macOS
+14+ AppKit preloads for any Cocoa application with a text-input responder
+chain. You will see identical `AutoFill (…)` helpers listed for virtually
+every native app on your system (Brave, WhatsApp, Raycast, etc.). The helper
+is parented to `launchd` (not to `e-sh`), consumes only a few MB idle, and is
+managed entirely by the OS — it is a cosmetic artifact of AppKit, not an
+access by `e-sh`, and is outside application-developer control.
 
 ## Contributing
 
