@@ -1,6 +1,6 @@
 use age::secrecy::SecretString;
 use eframe::{App, CreationContext, Frame};
-use egui::{CentralPanel, Panel, Ui};
+use egui::{CentralPanel, Key, KeyboardShortcut, Modifiers, Panel, Ui};
 use egui_dock::{DockArea, DockState, Style};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -17,6 +17,7 @@ use e_sh::config::store::{
 use e_sh::core::connection::{AuthMethod, Connection, ConnectionStore, Protocol};
 use e_sh::proto::sftp::spawn_sftp_session;
 use e_sh::proto::ssh::{HostKeyContext, spawn_session};
+use e_sh::ui::command_palette::{Command, CommandItem, CommandPalette, PaletteResult};
 use e_sh::ui::connection_tree::ConnectionTree;
 use e_sh::ui::dock::{EshTab, EshTabViewer, TerminalTab};
 use e_sh::ui::edit_dialog::EditConnectionDialog;
@@ -52,6 +53,9 @@ pub struct EshApp {
     status: String,
     editor: Option<EditConnectionDialog>,
     toaster: Toaster,
+    palette: CommandPalette,
+    sidebar_visible: bool,
+    quit_requested: bool,
 }
 
 impl EshApp {
@@ -97,6 +101,9 @@ impl EshApp {
             status: "Ready".to_string(),
             editor: None,
             toaster: Toaster::default(),
+            palette: CommandPalette::default(),
+            sidebar_visible: true,
+            quit_requested: false,
         }
     }
 
@@ -294,6 +301,159 @@ impl EshApp {
         }
     }
 
+    fn build_palette_items(&self) -> Vec<CommandItem> {
+        let mut items: Vec<CommandItem> = Vec::new();
+
+        items.push(CommandItem {
+            command: Command::NewConnection,
+            label: "New connection".to_string(),
+            detail: "Create a new SSH/SFTP entry".to_string(),
+            hint: "+".to_string(),
+        });
+        items.push(CommandItem {
+            command: Command::ToggleSidebar,
+            label: if self.sidebar_visible {
+                "Hide sidebar".to_string()
+            } else {
+                "Show sidebar".to_string()
+            },
+            detail: "Toggle the connection tree".to_string(),
+            hint: "\u{2318}B".to_string(),
+        });
+        items.push(CommandItem {
+            command: Command::CloseActiveTab,
+            label: "Close active tab".to_string(),
+            detail: "Close the currently focused session".to_string(),
+            hint: "\u{2318}W".to_string(),
+        });
+        items.push(CommandItem {
+            command: Command::LockSecrets,
+            label: "Lock secrets".to_string(),
+            detail: "Clear unlocked master-password session".to_string(),
+            hint: "".to_string(),
+        });
+        items.push(CommandItem {
+            command: Command::Quit,
+            label: "Quit e-sh".to_string(),
+            detail: "Close the application".to_string(),
+            hint: "\u{2318}Q".to_string(),
+        });
+
+        for (_, tab) in self.dock.iter_all_tabs() {
+            items.push(CommandItem {
+                command: Command::SwitchTab { id: tab.id() },
+                label: format!("Switch to: {}", tab.title()),
+                detail: "Open tab".to_string(),
+                hint: "tab".to_string(),
+            });
+        }
+
+        for conn in &self.store.connections {
+            let addr = format!("{}@{}:{}", conn.username, conn.host, conn.port);
+            let group = conn
+                .group
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Ungrouped")
+                .to_string();
+
+            match conn.protocol {
+                Protocol::Sftp => {
+                    items.push(CommandItem {
+                        command: Command::OpenSftp { id: conn.id },
+                        label: format!("SFTP: {}", conn.name),
+                        detail: format!("{addr}  -  {group}"),
+                        hint: "SFTP".to_string(),
+                    });
+                }
+                _ => {
+                    items.push(CommandItem {
+                        command: Command::OpenConnection { id: conn.id },
+                        label: format!("Open: {}", conn.name),
+                        detail: format!("{addr}  -  {group}"),
+                        hint: conn.protocol.label().to_string(),
+                    });
+                    items.push(CommandItem {
+                        command: Command::OpenSftp { id: conn.id },
+                        label: format!("SFTP: {}", conn.name),
+                        detail: format!("{addr}  -  {group}"),
+                        hint: "SFTP".to_string(),
+                    });
+                }
+            }
+            items.push(CommandItem {
+                command: Command::EditConnection { id: conn.id },
+                label: format!("Edit: {}", conn.name),
+                detail: format!("{addr}  -  {group}"),
+                hint: "edit".to_string(),
+            });
+        }
+
+        items
+    }
+
+    fn dispatch_command(&mut self, cmd: Command) {
+        match cmd {
+            Command::NewConnection => self.start_new_connection(),
+            Command::OpenConnection { id } => self.open_connection(id),
+            Command::OpenSftp { id } => self.open_sftp_tab(id),
+            Command::EditConnection { id } => {
+                if let Some(conn) = self.store.find(id).cloned() {
+                    self.editor = Some(EditConnectionDialog::from_connection(conn));
+                }
+            }
+            Command::SwitchTab { id } => self.focus_tab_by_id(id),
+            Command::CloseActiveTab => self.close_active_tab(),
+            Command::ToggleSidebar => {
+                self.sidebar_visible = !self.sidebar_visible;
+                self.status = if self.sidebar_visible {
+                    "Sidebar shown".into()
+                } else {
+                    "Sidebar hidden".into()
+                };
+            }
+            Command::LockSecrets => {
+                self.secrets = None;
+                self.status = "Secrets locked".into();
+                self.toaster
+                    .info("Locked", "Master-password session cleared");
+            }
+            Command::Quit => {
+                self.quit_requested = true;
+            }
+        }
+    }
+
+    fn focus_tab_by_id(&mut self, id: Uuid) {
+        let target: Option<egui_dock::TabPath> = self
+            .dock
+            .iter_all_tabs()
+            .find_map(|(path, tab)| if tab.id() == id { Some(path) } else { None });
+        if let Some(path) = target {
+            let _ = self.dock.set_active_tab(path);
+            self.dock.set_focused_node_and_surface(path.node_path());
+        }
+    }
+
+    fn close_active_tab(&mut self) {
+        let Some(node_path) = self.dock.focused_leaf() else {
+            return;
+        };
+        let Ok(leaf) = self.dock.leaf(node_path) else {
+            return;
+        };
+        if leaf.tabs.is_empty() {
+            return;
+        }
+        let active_idx = leaf.active.0.min(leaf.tabs.len() - 1);
+        let tab_path = egui_dock::TabPath::new(
+            node_path.surface,
+            node_path.node,
+            egui_dock::TabIndex(active_idx),
+        );
+        let _ = self.dock.remove_tab(tab_path);
+    }
+
     fn poll_session_errors(&mut self) {
         for (_, tab) in self.dock.iter_all_tabs_mut() {
             match tab {
@@ -339,46 +499,75 @@ impl EshApp {
 }
 
 impl App for EshApp {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut Frame) {
+        let ctx = ui.ctx().clone();
+
+        let palette_primary = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
+        let palette_alt = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
+        let toggle_sidebar = KeyboardShortcut::new(Modifiers::COMMAND, Key::B);
+        let close_tab = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
+        let quit_shortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Q);
+
+        let (open_palette, toggle_sb, close_t, quit_now) = ctx.input_mut(|i| {
+            (
+                i.consume_shortcut(&palette_primary) || i.consume_shortcut(&palette_alt),
+                i.consume_shortcut(&toggle_sidebar),
+                i.consume_shortcut(&close_tab),
+                i.consume_shortcut(&quit_shortcut),
+            )
+        });
+        if open_palette {
+            self.palette.toggle();
+        }
+        if toggle_sb {
+            self.dispatch_command(Command::ToggleSidebar);
+        }
+        if close_t {
+            self.dispatch_command(Command::CloseActiveTab);
+        }
+        if quit_now {
+            self.dispatch_command(Command::Quit);
+        }
+
         Panel::bottom("status").show_inside(ui, |ui| {
             StatusBar { message: &self.status }.show(ui);
         });
 
-        Panel::left("connections")
-            .resizable(true)
-            .default_size(240.0)
-            .show_inside(ui, |ui| {
-                let action = ConnectionTree { store: &self.store }.show(ui);
-                if action.new_connection {
-                    self.start_new_connection();
-                }
-                if let Some(id) = action.open {
-                    self.open_connection(id);
-                }
-                if let Some(id) = action.open_sftp {
-                    self.open_sftp_tab(id);
-                }
-                if let Some(id) = action.edit {
-                    if let Some(conn) = self.store.find(id).cloned() {
-                        self.editor = Some(EditConnectionDialog::from_connection(conn));
+        if self.sidebar_visible {
+            Panel::left("connections")
+                .resizable(true)
+                .default_size(240.0)
+                .show_inside(ui, |ui| {
+                    let action = ConnectionTree { store: &self.store }.show(ui);
+                    if action.new_connection {
+                        self.start_new_connection();
                     }
-                }
-                if let Some(id) = action.delete {
-                    if let Some(removed) = self.store.remove(id) {
-                        if let Some(secrets) = self.secrets.as_mut() {
-                            forget_secrets(&removed, secrets);
-                        } else {
-                            self.pending
-                                .push_back(PendingAction::Forget(removed.clone()));
+                    if let Some(id) = action.open {
+                        self.open_connection(id);
+                    }
+                    if let Some(id) = action.open_sftp {
+                        self.open_sftp_tab(id);
+                    }
+                    if let Some(id) = action.edit {
+                        if let Some(conn) = self.store.find(id).cloned() {
+                            self.editor = Some(EditConnectionDialog::from_connection(conn));
                         }
-                        self.persist();
-                        self.status = "Deleted connection".to_string();
-                        self.toaster.warn("Deleted", removed.name);
                     }
-                }
-            });
-
-        let ctx = ui.ctx().clone();
+                    if let Some(id) = action.delete {
+                        if let Some(removed) = self.store.remove(id) {
+                            if let Some(secrets) = self.secrets.as_mut() {
+                                forget_secrets(&removed, secrets);
+                            } else {
+                                self.pending
+                                    .push_back(PendingAction::Forget(removed.clone()));
+                            }
+                            self.persist();
+                            self.status = "Deleted connection".to_string();
+                            self.toaster.warn("Deleted", removed.name);
+                        }
+                    }
+                });
+        }
 
         self.poll_session_errors();
 
@@ -460,7 +649,19 @@ impl App for EshApp {
                     .show_inside(ui, &mut self.viewer);
             });
 
+        let palette_items = self.build_palette_items();
+        match self.palette.show(&ctx, &palette_items) {
+            PaletteResult::None => {}
+            PaletteResult::Execute(cmd) => self.dispatch_command(cmd),
+        }
+
         self.toaster.show(&ctx);
+
+        if self.quit_requested {
+            self.quit_requested = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            let _ = frame;
+        }
     }
 }
 

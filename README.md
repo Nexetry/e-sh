@@ -79,10 +79,14 @@ the keyboard-first, low-overhead feel that power users expect.
   - Legacy plaintext `connections.toml` files are migrated transparently into
     the encrypted store on first unlock
 
+- **Command palette + keyboard shortcuts**:
+  - Press **Cmd-K** (macOS) / **Ctrl-K** (Linux / Windows) — or **Cmd/Ctrl-Shift-P** — to open a fuzzy command palette
+  - Fuzzy search powered by `nucleo-matcher` (the same algorithm family as Helix / Zed)
+  - Commands: _New connection_, _Open_, _Open SFTP_, _Edit_ (per saved connection), _Switch to tab_ (per open tab), _Close tab_, _Toggle sidebar_, _Lock secrets_, _Quit_
+  - Global app shortcuts: **Cmd/Ctrl-B** toggle sidebar · **Cmd/Ctrl-W** close active tab · **Cmd/Ctrl-Q** quit
+
 ### Planned
 
-- Cross-platform release builds for Linux, macOS, Windows
-- Keyboard-first navigation + command palette
 - RDP and VNC backends
 
 ## Supported Protocols
@@ -184,11 +188,30 @@ pwsh scripts/build-release.ps1
 
 Output:
 
-- **macOS**: `dist/e-sh-<version>-macos-universal.tar.gz` containing a double-clickable **`e-sh.app`** bundle (universal arm64+x86_64, ad-hoc signed; on first launch macOS may show a Gatekeeper warning — right-click the app → _Open_ to bypass)
-- **Linux**: `dist/e-sh-<version>-linux-x86_64.tar.gz` containing the raw `e-sh` binary
-- **Windows**: `dist/e-sh-<version>-windows-x86_64.zip` containing `e-sh.exe`
+- **macOS**:
+  - `dist/e-sh-<version>-macos-universal.tar.gz` — universal arm64+x86_64 `e-sh.app` bundle, ad-hoc signed (on first launch Gatekeeper may warn — right-click → _Open_ to bypass)
+  - `dist/e-sh-<version>-macos-universal.dmg` — drag-to-Applications installer (requires [`create-dmg`](https://github.com/create-dmg/create-dmg); falls back to plain `hdiutil` if unavailable)
+- **Linux**:
+  - `dist/e-sh-<version>-linux-x86_64.tar.gz` — raw `e-sh` binary + README
+  - `dist/e-sh_<version>-1_amd64.deb` — Debian / Ubuntu package (requires [`cargo-deb`](https://github.com/kornelski/cargo-deb); installs to `/usr/bin/e-sh` with a `.desktop` entry)
+- **Windows**:
+  - `dist/e-sh-<version>-windows-x86_64.zip` — portable archive
+  - `dist/e-sh-<version>-x86_64.msi` — MSI installer (requires [`cargo-wix`](https://github.com/volks73/cargo-wix) + WiX Toolset v3; run `cargo wix init` once to generate `wix/main.wxs`)
 
-Each archive ships with a matching `.sha256` checksum file.
+Each archive and installer ships with a matching `.sha256` checksum file.
+
+Install the installer tooling (one-time, per host) with:
+
+```bash
+# macOS
+brew install create-dmg
+
+# Linux
+cargo install cargo-deb
+
+# Windows (PowerShell)
+cargo install cargo-wix
+```
 
 For automated cross-platform release builds on git tag push (`vX.Y.Z`), the
 GitHub Actions workflow at `.github/workflows/release.yml` builds all three
@@ -268,10 +291,11 @@ persist host keys), but expect breaking changes to config formats and APIs.
 - [x] Credential storage via `age`-encrypted secret store
 - [x] Terminal scrollback UI + selection / copy / paste
 - [x] SFTP adapter (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns)
+- [x] Command palette + keyboard-first navigation
+- [x] Native installers (`.dmg` / `.deb` / `.msi`) in the release pipeline
 - [ ] Tabbed multi-session UI polish (split panes, drag-to-reorder)
 - [ ] RDP adapter
 - [ ] VNC adapter
-- [ ] Command palette + keyboard-first navigation
 - [ ] Session recording / logging (opt-in)
 - [ ] Plugin / scripting hooks
 

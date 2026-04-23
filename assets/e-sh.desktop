@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=e-sh
+GenericName=Remote Connection Manager
+Comment=Unified SSH/SFTP client with a native UI
+Exec=e-sh
+Icon=e-sh
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=ssh;sftp;terminal;remote;
+StartupNotify=true

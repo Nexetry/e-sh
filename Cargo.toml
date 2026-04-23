@@ -2,6 +2,11 @@
 name = "e-sh"
 version = "0.1.0"
 edition = "2024"
+description = "A unified cross-platform remote connection manager (SSH, SFTP) built in Rust with egui."
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/nexetry/e-sh"
+repository = "https://github.com/nexetry/e-sh"
+readme = "README.md"
 
 [dependencies]
 eframe = { version = "0.34", default-features = false, features = [
@@ -39,7 +44,32 @@ uuid = { version = "1", features = ["v4", "serde"] }
 rfd = "0.15"
 age = "0.11"
 base64 = "0.22"
+nucleo-matcher = "0.3"
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[package.metadata.deb]
+maintainer = "nexetry <hello@nexetry.com>"
+copyright = "2026, nexetry"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/x86_64-unknown-linux-gnu/release/e-sh", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/e-sh/README.md", "644"],
+    ["assets/e-sh.desktop", "usr/share/applications/", "644"],
+]
+extended-description = """\
+e-sh is a single-binary, keyboard-first remote connection manager for SSH \
+and SFTP, with a native egui UI. It supports password / pubkey / SSH-agent \
+auth, TOFU host-key pinning, chained jump hosts, SSH tunnels (-L/-R/-D), \
+and a dual-pane SFTP browser with drag-drop transfers.\
+"""
+depends = "libgtk-3-0, libxcb1, libxkbcommon0, libssl3, libdbus-1-3"
+
+[package.metadata.wix]
+upgrade-guid = "E5E5A2E1-5E5A-4E5A-8E5A-5E5A2E15E5A2"
+path-guid = "E5E5A2E1-5E5A-4E5A-8E5A-5E5A2E15E5A3"
+license = false
+eula = false

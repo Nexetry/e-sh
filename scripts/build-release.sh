@@ -31,9 +31,47 @@ build_macos_universal() {
   cp README.md "$stage/" 2>/dev/null || true
 
   tar -C "$DIST" -czf "$stage.tar.gz" "$(basename "$stage")"
-  rm -rf "$stage"
   ( cd "$DIST" && shasum -a 256 "$(basename "$stage").tar.gz" > "$(basename "$stage").tar.gz.sha256" )
-  echo "    -> $stage.tar.gz (contains ${APP_NAME:-$BIN_NAME}.app)"
+  echo "    -> $stage.tar.gz (contains ${BIN_NAME}.app)"
+
+  build_macos_dmg "$stage"
+  rm -rf "$stage"
+}
+
+build_macos_dmg() {
+  local stage="$1"
+  local dmg_path="$DIST/${BIN_NAME}-${VERSION}-macos-universal.dmg"
+  rm -f "$dmg_path"
+
+  if command -v create-dmg >/dev/null 2>&1; then
+    echo "    ... building .dmg via create-dmg"
+    create-dmg \
+      --volname "${BIN_NAME} ${VERSION}" \
+      --window-pos 200 120 \
+      --window-size 640 360 \
+      --icon-size 96 \
+      --icon "${BIN_NAME}.app" 160 180 \
+      --hide-extension "${BIN_NAME}.app" \
+      --app-drop-link 480 180 \
+      --no-internet-enable \
+      "$dmg_path" \
+      "$stage/${BIN_NAME}.app" >/dev/null
+  else
+    echo "    ... create-dmg not found; falling back to hdiutil"
+    local tmp_src
+    tmp_src="$(mktemp -d)"
+    cp -R "$stage/${BIN_NAME}.app" "$tmp_src/"
+    ln -sf /Applications "$tmp_src/Applications"
+    hdiutil create \
+      -volname "${BIN_NAME} ${VERSION}" \
+      -srcfolder "$tmp_src" \
+      -ov -format UDZO \
+      "$dmg_path" >/dev/null
+    rm -rf "$tmp_src"
+  fi
+
+  ( cd "$DIST" && shasum -a 256 "$(basename "$dmg_path")" > "$(basename "$dmg_path").sha256" )
+  echo "    -> $dmg_path"
 }
 
 build_linux_x86_64() {
@@ -51,6 +89,27 @@ build_linux_x86_64() {
   rm -rf "$stage"
   ( cd "$DIST" && sha256sum "$(basename "$stage").tar.gz" > "$(basename "$stage").tar.gz.sha256" )
   echo "    -> $stage.tar.gz"
+
+  build_linux_deb
+}
+
+build_linux_deb() {
+  if ! command -v cargo-deb >/dev/null 2>&1; then
+    echo "    ... cargo-deb not installed; skipping .deb (install with: cargo install cargo-deb)"
+    return 0
+  fi
+  echo "    ... building .deb via cargo-deb"
+  local deb_out
+  deb_out="$(cargo deb --no-build --target x86_64-unknown-linux-gnu --output "$DIST" 2>&1 | tee /dev/stderr | tail -1)"
+  local deb_path
+  deb_path="$(ls -1t "$DIST"/*.deb 2>/dev/null | head -1 || true)"
+  if [[ -n "$deb_path" && -f "$deb_path" ]]; then
+    ( cd "$DIST" && sha256sum "$(basename "$deb_path")" > "$(basename "$deb_path").sha256" )
+    echo "    -> $deb_path"
+  else
+    echo "    !! cargo-deb did not produce a .deb: $deb_out" >&2
+    return 1
+  fi
 }
 
 build_windows_x86_64() {

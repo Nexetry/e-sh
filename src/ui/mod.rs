@@ -1,3 +1,4 @@
+pub mod command_palette;
 pub mod connection_tree;
 pub mod dock;
 pub mod edit_dialog;

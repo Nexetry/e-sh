@@ -44,6 +44,19 @@ jobs:
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxkbcommon-dev libssl-dev libdbus-1-dev pkg-config
 
+      - name: Install cargo-deb (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo install cargo-deb --locked
+
+      - name: Install create-dmg (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install create-dmg
+
+      - name: Install cargo-wix (Windows)
+        if: matrix.os == 'windows-latest'
+        run: cargo install cargo-wix --locked
+        shell: pwsh
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
@@ -64,6 +77,9 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.dmg
+            dist/*.deb
+            dist/*.msi
             dist/*.sha256
           if-no-files-found: error
 
@@ -83,5 +99,8 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.dmg
+            dist/*.deb
+            dist/*.msi
             dist/*.sha256
           generate_release_notes: true
