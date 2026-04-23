@@ -1,6 +1,6 @@
 use egui::{
     Align, Area, Color32, Context, CornerRadius, FontId, Frame, Id, Key, Layout, Order, RichText,
-    ScrollArea, Sense, Stroke, TextEdit, Ui, Vec2,
+    ScrollArea, Sense, Stroke, TextEdit, Ui,
 };
 use nucleo_matcher::{
     Matcher, Utf32Str,
@@ -190,7 +190,8 @@ fn render_list(ui: &mut Ui, items: &[&CommandItem], selected: &mut usize) -> Opt
     let mut clicked: Option<usize> = None;
     let row_height = 44.0;
     let max_visible = 9usize;
-    let max_height = row_height * max_visible as f32;
+    let visible = items.len().clamp(1, max_visible);
+    let max_height = row_height * visible as f32;
 
     ScrollArea::vertical()
         .max_height(max_height)
@@ -239,13 +240,19 @@ fn render_row(ui: &mut Ui, item: &CommandItem, selected: bool) -> egui::Response
     let frame = Frame::NONE
         .fill(bg)
         .corner_radius(CornerRadius::same(6))
-        .inner_margin(egui::Margin::symmetric(10, 8));
+        .inner_margin(egui::Margin::symmetric(10, 6));
 
     let inner = frame.show(ui, |ui| {
-        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+        ui.horizontal(|ui| {
             ui.set_min_width(ui.available_width());
             ui.vertical(|ui| {
-                ui.label(RichText::new(&item.label).color(text_color).size(14.0).strong());
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.label(
+                    RichText::new(&item.label)
+                        .color(text_color)
+                        .size(14.0)
+                        .strong(),
+                );
                 if !item.detail.is_empty() {
                     ui.label(
                         RichText::new(&item.detail)
@@ -254,12 +261,9 @@ fn render_row(ui: &mut Ui, item: &CommandItem, selected: bool) -> egui::Response
                     );
                 }
             });
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if !item.hint.is_empty() {
+            if !item.hint.is_empty() {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let hint_color = text_color.linear_multiply(0.55);
-                    ui.add_space(4.0);
-                    let resp = ui.allocate_exact_size(Vec2::new(0.0, 0.0), Sense::hover());
-                    let _ = resp;
                     Frame::NONE
                         .fill(Color32::TRANSPARENT)
                         .stroke(Stroke::new(1.0, hint_color))
@@ -273,8 +277,8 @@ fn render_row(ui: &mut Ui, item: &CommandItem, selected: bool) -> egui::Response
                                     .monospace(),
                             );
                         });
-                }
-            });
+                });
+            }
         });
     });
     ui.interact(inner.response.rect, inner.response.id, Sense::click())
