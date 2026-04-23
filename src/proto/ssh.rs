@@ -448,58 +448,90 @@ pub(crate) async fn authenticate(session: &mut Handle<Client>, conn: &Connection
                 .context("public key authentication")?
                 .success()
         }
-        AuthMethod::Agent => {
-            let mut agent = AgentClient::connect_env()
-                .await
-                .context("connecting to SSH agent (is SSH_AUTH_SOCK set?)")?;
-            let identities = agent
-                .request_identities()
-                .await
-                .context("requesting identities from SSH agent")?;
-            if identities.is_empty() {
-                return Err(anyhow!(
-                    "SSH agent has no identities loaded (try `ssh-add`)"
-                ));
-            }
-            let mut last_err: Option<String> = None;
-            let mut succeeded = false;
-            for identity in identities {
-                let public = identity.public_key().into_owned();
-                let fp = public
-                    .fingerprint(HashAlg::Sha256)
-                    .to_string();
-                tracing::info!(fingerprint = %fp, "trying agent identity");
-                match session
-                    .authenticate_publickey_with(user, public, None, &mut agent)
-                    .await
-                {
-                    Ok(result) => {
-                        if result.success() {
-                            succeeded = true;
-                            break;
-                        } else {
-                            last_err = Some(format!("server rejected identity {fp}"));
-                        }
-                    }
-                    Err(e) => {
-                        last_err = Some(format!("agent sign error for {fp}: {e}"));
-                    }
-                }
-            }
-            if !succeeded {
-                return Err(anyhow!(
-                    "agent authentication failed: {}",
-                    last_err.unwrap_or_else(|| "no identity accepted".into())
-                ));
-            }
-            true
-        }
+        AuthMethod::Agent => authenticate_with_agent(session, user).await?,
     };
 
     if !authed {
         return Err(anyhow!("authentication failed"));
     }
     Ok(())
+}
+
+#[cfg(unix)]
+async fn authenticate_with_agent(session: &mut Handle<Client>, user: &str) -> Result<bool> {
+    let mut agent = AgentClient::connect_env()
+        .await
+        .context("connecting to SSH agent (is SSH_AUTH_SOCK set?)")?;
+    try_agent_identities(session, user, &mut agent).await
+}
+
+#[cfg(windows)]
+async fn authenticate_with_agent(session: &mut Handle<Client>, user: &str) -> Result<bool> {
+    // Prefer OpenSSH-for-Windows named pipe; fall back to Pageant.
+    const OPENSSH_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+    match AgentClient::connect_named_pipe(OPENSSH_PIPE).await {
+        Ok(mut agent) => try_agent_identities(session, user, &mut agent).await,
+        Err(openssh_err) => match AgentClient::connect_pageant().await {
+            Ok(mut agent) => try_agent_identities(session, user, &mut agent).await,
+            Err(pageant_err) => Err(anyhow!(
+                "connecting to SSH agent failed (OpenSSH pipe: {openssh_err}; Pageant: {pageant_err})"
+            )),
+        },
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+async fn authenticate_with_agent(_session: &mut Handle<Client>, _user: &str) -> Result<bool> {
+    Err(anyhow!("SSH agent authentication is not supported on this platform"))
+}
+
+async fn try_agent_identities<S>(
+    session: &mut Handle<Client>,
+    user: &str,
+    agent: &mut AgentClient<S>,
+) -> Result<bool>
+where
+    S: russh::keys::agent::client::AgentStream + Unpin + Send + 'static,
+{
+    let identities = agent
+        .request_identities()
+        .await
+        .context("requesting identities from SSH agent")?;
+    if identities.is_empty() {
+        return Err(anyhow!(
+            "SSH agent has no identities loaded (try `ssh-add`)"
+        ));
+    }
+    let mut last_err: Option<String> = None;
+    let mut succeeded = false;
+    for identity in identities {
+        let public = identity.public_key().into_owned();
+        let fp = public.fingerprint(HashAlg::Sha256).to_string();
+        tracing::info!(fingerprint = %fp, "trying agent identity");
+        match session
+            .authenticate_publickey_with(user, public, None, agent)
+            .await
+        {
+            Ok(result) => {
+                if result.success() {
+                    succeeded = true;
+                    break;
+                } else {
+                    last_err = Some(format!("server rejected identity {fp}"));
+                }
+            }
+            Err(e) => {
+                last_err = Some(format!("agent sign error for {fp}: {e}"));
+            }
+        }
+    }
+    if !succeeded {
+        return Err(anyhow!(
+            "agent authentication failed: {}",
+            last_err.unwrap_or_else(|| "no identity accepted".into())
+        ));
+    }
+    Ok(true)
 }
 
 async fn start_tunnel(

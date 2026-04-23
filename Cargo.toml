@@ -56,7 +56,7 @@ copyright = "2026, nexetry"
 section = "net"
 priority = "optional"
 assets = [
-    ["target/x86_64-unknown-linux-gnu/release/e-sh", "usr/bin/", "755"],
+    ["target/release/e-sh", "usr/bin/", "755"],
     ["README.md", "usr/share/doc/e-sh/README.md", "644"],
     ["assets/e-sh.desktop", "usr/share/applications/", "644"],
 ]
