@@ -83,7 +83,7 @@ pub struct HostKeyContext {
     pub prompts: UnboundedSender<HostKeyPrompt>,
 }
 
-struct Client {
+pub struct Client {
     host: String,
     port: u16,
     host_keys: HostKeyContext,
@@ -269,7 +269,15 @@ pub fn spawn_session(
     }
 }
 
-async fn establish_session(
+pub async fn connect_and_authenticate(
+    chain: &[Connection],
+    host_keys: HostKeyContext,
+) -> Result<Handle<Client>> {
+    let (handle, _) = establish_session(chain, host_keys).await?;
+    Ok(handle)
+}
+
+pub(crate) async fn establish_session(
     chain: &[Connection],
     host_keys: HostKeyContext,
 ) -> Result<(Handle<Client>, Arc<Mutex<HashMap<u32, (String, u16)>>>)> {
@@ -419,7 +427,7 @@ async fn run_session(
     result
 }
 
-async fn authenticate(session: &mut Handle<Client>, conn: &Connection) -> Result<()> {
+pub(crate) async fn authenticate(session: &mut Handle<Client>, conn: &Connection) -> Result<()> {
     let user = &conn.username;
     let authed = match &conn.auth {
         AuthMethod::Password { password } => {

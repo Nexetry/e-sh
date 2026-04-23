@@ -21,6 +21,7 @@ the keyboard-first, low-overhead feel that power users expect.
 ## Features
 
 ### Working today
+
 - Native, GPU-accelerated UI powered by [`egui`](https://github.com/emilk/egui) + `egui_dock`
 - Royal-TSX-style layout: connection tree on the left, dockable tabbed terminals, status bar
 - Connection manager with add / edit / delete and right-click menu, grouped by tag
@@ -41,7 +42,7 @@ the keyboard-first, low-overhead feel that power users expect.
 - **TOFU host-key verification**:
   - SHA-256 fingerprints stored in `host_keys.toml`
   - Interactive modal prompt on first connect and on key mismatch
-  - Three actions: *Reject*, *Accept once*, *Accept and save*
+  - Three actions: _Reject_, _Accept once_, _Accept and save_
 - **SSH tunnels** (configurable per connection):
   - **Local** (`-L`) — forward a local port to a remote host:port through the session
   - **Remote** (`-R`) — bind a port on the remote server and forward back to a local target
@@ -54,6 +55,19 @@ the keyboard-first, low-overhead feel that power users expect.
   - True SSH-in-SSH via nested handshakes over `direct-tcpip` channels
   - Live "Resolved path" preview in the edit dialog
 
+- **SFTP** dual-pane file browser:
+  - `russh-sftp` 2.1.1 backend, opens its own SSH session per tab (independent of any shell tab)
+  - Side-by-side **Local** and **Remote** panes with editable path bar and clickable breadcrumb path
+  - Right-click everything: per-row menu (Open / Upload-or-Download / Rename / Delete) and empty-pane menu (New folder / Refresh / Up)
+  - **Multi-select** with Finder/Explorer semantics: plain click = single, Cmd/Ctrl-click = toggle, Shift-click = range from anchor
+  - Bulk **Upload / Download / Delete** across the current selection (`N items` label when >1); Rename stays single-only
+  - **Drag-and-drop** files or folders from the OS into either pane to upload / move into the current dir
+  - Recursive folder transfers (upload and download), with one aggregated transfer row per top-level command
+  - Per-transfer **Cancel** button (cooperative, partial files left on disk); progress bar + bytes/total + status line
+  - **Filter** field (🔍) per pane: case-insensitive substring match, with one-click clear
+  - **Resizable columns** (Name / Size / Modified) and **click-to-sort** column headers (toggle ▲ / ▼); directories grouped first regardless of sort key
+  - Folder / file / symlink icons; size auto-formatted (B / K / M / G / T)
+
 - **Credential storage**:
   - All passwords and key passphrases live in the OS-native secret store
     (macOS Keychain, Windows Credential Manager, Linux Secret Service)
@@ -63,18 +77,19 @@ the keyboard-first, low-overhead feel that power users expect.
     first load
 
 ### Planned
+
 - Cross-platform release builds for Linux, macOS, Windows
 - Keyboard-first navigation + command palette
-- SFTP, RDP, and VNC backends
+- RDP and VNC backends
 
 ## Supported Protocols
 
-| Protocol | Purpose                       | Status                                                                          |
-| -------- | ----------------------------- | ------------------------------------------------------------------------------- |
+| Protocol | Purpose                       | Status                                                                                                                        |
+| -------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | SSH      | Interactive remote shell      | **Working** (password + pubkey + agent, TOFU, tunnels `-L`/`-R`/`-D`, chained ProxyJump, scrollback + copy/paste, OS keyring) |
-| SFTP     | Secure file transfer / browse | Planned                                                                         |
-| RDP      | Remote desktop (Windows)      | Planned                                                                         |
-| VNC      | Remote desktop (generic)      | Planned                                                                         |
+| SFTP     | Secure file transfer / browse | **Working** (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns, cancel)     |
+| RDP      | Remote desktop (Windows)      | Planned                                                                                                                       |
+| VNC      | Remote desktop (generic)      | Planned                                                                                                                       |
 
 ## Architecture
 
@@ -92,12 +107,14 @@ src/
 │   ├── store.rs            ConfigPaths + connections.toml load/save
 │   └── host_keys.rs        TOFU HostKeyStore (host_keys.toml)
 ├── proto/
-│   └── ssh.rs              russh client, host-key verifier, PTY session
+│   ├── ssh.rs              russh client, host-key verifier, PTY session
+│   └── sftp.rs             russh-sftp client, recursive transfers, cancel registry
 └── ui/
     ├── connection_tree.rs  Left-side tree + "+" button
     ├── dock.rs             egui_dock tab area + per-tab tunnels status strip
     ├── edit_dialog.rs      Add / edit connection modal (auth, jump chain, tunnels)
     ├── host_key_prompt.rs  TOFU prompt modal
+    ├── sftp_tab.rs         Dual-pane SFTP browser (filter, sort, resize, multi-select)
     ├── status_bar.rs       Bottom status bar
     ├── toast.rs            Toast notification overlay
     └── terminal_widget/    alacritty_terminal renderer
@@ -113,15 +130,17 @@ VS Code "Draw.io Integration" extension.
 ## Tech Stack
 
 - **Language:** Rust (edition 2024, toolchain `1.85+`)
-- **UI:** [`egui`](https://github.com/emilk/egui) `0.34`, `eframe` `0.34`, `egui_dock` `0.19`
+- **UI:** [`egui`](https://github.com/emilk/egui) `0.34`, `eframe` `0.34`, `egui_dock` `0.19`, `egui_extras` `0.34`
 - **Async runtime:** `tokio` `1`
 - **SSH:** `russh` `0.60`
+- **SFTP:** `russh-sftp` `2.1.1`
 - **Terminal emulator:** `alacritty_terminal` `0.26`
 - **File picker:** `rfd` `0.15`
+- **Keyring:** `keyring` `3` (Keychain / Credential Manager / Secret Service)
 - **Config:** TOML via `serde` + `toml`
 - **Paths:** `directories` `6`
 - **Logging:** `tracing` + `tracing-subscriber`
-- **Planned:** `russh-sftp`, `ironrdp`, `vnc-rs`, `keyring`
+- **Planned:** `ironrdp`, `vnc-rs`
 
 ## Getting Started
 
@@ -158,10 +177,22 @@ The compiled binary will be available at `target/release/e-sh`.
      if the key is encrypted (passphrase is saved to OS keyring)
    - **SSH agent** — uses your running ssh-agent (`$SSH_AUTH_SOCK`); each loaded
      identity is tried in order. Run `ssh-add` to load keys.
-4. Save. Double-click the connection (or right-click → *Open*) to connect.
+4. Save. Double-click the connection (or right-click → _Open_) to connect.
 5. On first connect to a host you'll be prompted to verify its key fingerprint
-   (TOFU). Choose *Accept and save* to remember it.
-6. Right-click any connection to *Open*, *Edit*, or *Delete* it.
+   (TOFU). Choose _Accept and save_ to remember it.
+6. Right-click any connection to _Open_, _Edit_, _Open SFTP_, or _Delete_ it.
+
+### SFTP browser
+
+- Open SFTP for any connection: right-click → _Open SFTP_ (uses the connection's existing auth + jump chain over a fresh SSH session).
+- Two panes: **Local** (your machine) and **Remote** (the server). Each pane has:
+  - A clickable breadcrumb path and an editable path text field (Enter to navigate).
+  - A 🔍 **filter** input — case-insensitive substring match against entry names.
+  - **Resizable** Name / Size / Modified columns; click any column header to sort, click again to flip direction (▲ / ▼). Folders are always grouped first.
+- **Selection**: click = single, Cmd/Ctrl-click = toggle, Shift-click = range.
+- **Right-click** an entry for: Open, Upload / Download (across panes), Rename (single-only), Delete. Right-click on empty space for: New folder, Refresh, Up.
+- **Drag and drop** files or folders from your OS into either pane to upload / move into the current directory. Folder transfers recurse automatically.
+- The bottom **Transfers** strip shows progress, bytes, and a per-transfer **Cancel** button. Use _Clear finished_ to prune completed rows.
 
 ## Configuration
 
@@ -182,9 +213,9 @@ Files in that directory:
 
 ## Project Status
 
-`e-sh` is in **early development (alpha)**. The SSH MVP is functional end-to-end
-(connect, authenticate, render shell, persist host keys), but expect breaking
-changes to config formats and APIs.
+`e-sh` is in **early development (alpha)**. The SSH and SFTP MVPs are functional
+end-to-end (connect, authenticate, render shell, browse + transfer files,
+persist host keys), but expect breaking changes to config formats and APIs.
 
 ## Roadmap
 
@@ -203,8 +234,8 @@ changes to config formats and APIs.
 - [x] SSH agent authentication
 - [x] Credential storage via OS keyring
 - [x] Terminal scrollback UI + selection / copy / paste
+- [x] SFTP adapter (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns)
 - [ ] Tabbed multi-session UI polish (split panes, drag-to-reorder)
-- [ ] SFTP adapter (browser + transfers)
 - [ ] RDP adapter
 - [ ] VNC adapter
 - [ ] Command palette + keyboard-first navigation

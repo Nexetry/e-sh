@@ -10,12 +10,14 @@ use uuid::Uuid;
 
 use e_sh::config::host_keys::{HostKeyPrompt, HostKeyStore};
 use e_sh::config::store::{ConfigPaths, forget_secrets, load_connections, save_connections};
-use e_sh::core::connection::{Connection, ConnectionStore};
+use e_sh::core::connection::{Connection, ConnectionStore, Protocol};
+use e_sh::proto::sftp::spawn_sftp_session;
 use e_sh::proto::ssh::{HostKeyContext, spawn_session};
 use e_sh::ui::connection_tree::ConnectionTree;
-use e_sh::ui::dock::{EshTabViewer, TerminalTab};
+use e_sh::ui::dock::{EshTab, EshTabViewer, TerminalTab};
 use e_sh::ui::edit_dialog::EditConnectionDialog;
 use e_sh::ui::host_key_prompt::{HostKeyPromptResult, HostKeyPromptUi};
+use e_sh::ui::sftp_tab::SftpTab;
 use e_sh::ui::status_bar::StatusBar;
 use e_sh::ui::terminal_widget::TerminalEmulator;
 use e_sh::ui::toast::Toaster;
@@ -28,7 +30,7 @@ pub struct EshApp {
     host_key_prompt_tx: UnboundedSender<HostKeyPrompt>,
     host_key_prompt_rx: UnboundedReceiver<HostKeyPrompt>,
     pending_host_key_prompts: VecDeque<HostKeyPrompt>,
-    dock: DockState<TerminalTab>,
+    dock: DockState<EshTab>,
     viewer: EshTabViewer,
     status: String,
     editor: Option<EditConnectionDialog>,
@@ -74,6 +76,10 @@ impl EshApp {
         let Some(conn) = self.store.find(id).cloned() else {
             return;
         };
+        if matches!(conn.protocol, Protocol::Sftp) {
+            self.open_sftp_tab(id);
+            return;
+        }
         let chain = match self.store.resolve_jump_chain(id) {
             Ok(c) => c,
             Err(e) => {
@@ -91,21 +97,56 @@ impl EshApp {
         let emulator = TerminalEmulator::new(handle, 80, 24);
         let title = format!("{} ({})", conn.name, conn.protocol.label());
         let connection_label = format!("{}@{}:{}", conn.username, conn.host, conn.port);
-        let tab = TerminalTab {
+        let tab = EshTab::Terminal(TerminalTab {
             id: Uuid::new_v4(),
             title,
             connection_label,
             emulator,
             closed_reported: false,
+        });
+        self.push_tab(tab);
+        self.status = format!("Opened {}@{}", conn.username, conn.host);
+        self.toaster
+            .info("Connecting", format!("{}@{}:{}", conn.username, conn.host, conn.port));
+    }
+
+    fn open_sftp_tab(&mut self, id: Uuid) {
+        let Some(conn) = self.store.find(id).cloned() else {
+            return;
         };
+        let chain = match self.store.resolve_jump_chain(id) {
+            Ok(c) => c,
+            Err(e) => {
+                self.status = format!("Jump host error: {e}");
+                self.toaster.error("Jump host error", e.to_string());
+                return;
+            }
+        };
+        let host_ctx = HostKeyContext {
+            store: self.host_keys.clone(),
+            paths: self.paths.clone(),
+            prompts: self.host_key_prompt_tx.clone(),
+        };
+        let handle = spawn_sftp_session(&self.rt, chain, host_ctx);
+        let title = format!("{} (SFTP)", conn.name);
+        let connection_label = format!("{}@{}:{}", conn.username, conn.host, conn.port);
+        let tab = EshTab::Sftp(SftpTab::new(
+            Uuid::new_v4(),
+            title,
+            connection_label.clone(),
+            handle,
+        ));
+        self.push_tab(tab);
+        self.status = format!("Opened SFTP {}", connection_label);
+        self.toaster.info("SFTP", connection_label);
+    }
+
+    fn push_tab(&mut self, tab: EshTab) {
         if self.dock.main_surface_mut().is_empty() {
             self.dock = DockState::new(vec![tab]);
         } else {
             self.dock.push_to_focused_leaf(tab);
         }
-        self.status = format!("Opened {}@{}", conn.username, conn.host);
-        self.toaster
-            .info("Connecting", format!("{}@{}:{}", conn.username, conn.host, conn.port));
     }
 
     fn start_new_connection(&mut self) {
@@ -134,20 +175,42 @@ impl EshApp {
 
     fn poll_session_errors(&mut self) {
         for (_, tab) in self.dock.iter_all_tabs_mut() {
-            if tab.closed_reported {
-                continue;
-            }
-            if let Some(reason) = tab.emulator.closed.clone() {
-                tab.closed_reported = true;
-                let label = tab.connection_label.clone();
-                let lower = reason.to_lowercase();
-                if lower == "session closed"
-                    || lower.is_empty()
-                    || lower == "client closing"
-                {
-                    self.toaster.info("Disconnected", label);
-                } else {
-                    self.toaster.error(format!("{label} failed"), reason);
+            match tab {
+                EshTab::Terminal(tab) => {
+                    if tab.closed_reported {
+                        continue;
+                    }
+                    if let Some(reason) = tab.emulator.closed.clone() {
+                        tab.closed_reported = true;
+                        let label = tab.connection_label.clone();
+                        let lower = reason.to_lowercase();
+                        if lower == "session closed"
+                            || lower.is_empty()
+                            || lower == "client closing"
+                        {
+                            self.toaster.info("Disconnected", label);
+                        } else {
+                            self.toaster.error(format!("{label} failed"), reason);
+                        }
+                    }
+                }
+                EshTab::Sftp(tab) => {
+                    if tab.closed_reported {
+                        continue;
+                    }
+                    if let Some(reason) = tab.closed.clone() {
+                        tab.closed_reported = true;
+                        let label = tab.connection_label.clone();
+                        let lower = reason.to_lowercase();
+                        if lower == "session closed"
+                            || lower.is_empty()
+                            || lower == "client closing"
+                        {
+                            self.toaster.info("SFTP disconnected", label);
+                        } else {
+                            self.toaster.error(format!("{label} SFTP failed"), reason);
+                        }
+                    }
                 }
             }
         }
@@ -170,6 +233,9 @@ impl App for EshApp {
                 }
                 if let Some(id) = action.open {
                     self.open_connection(id);
+                }
+                if let Some(id) = action.open_sftp {
+                    self.open_sftp_tab(id);
                 }
                 if let Some(id) = action.edit {
                     if let Some(conn) = self.store.find(id).cloned() {

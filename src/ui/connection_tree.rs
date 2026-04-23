@@ -1,7 +1,7 @@
 use egui::{CollapsingHeader, ScrollArea, Ui};
 use uuid::Uuid;
 
-use crate::core::connection::ConnectionStore;
+use crate::core::connection::{ConnectionStore, Protocol};
 
 pub struct ConnectionTree<'a> {
     pub store: &'a ConnectionStore,
@@ -10,6 +10,7 @@ pub struct ConnectionTree<'a> {
 #[derive(Default)]
 pub struct TreeAction {
     pub open: Option<Uuid>,
+    pub open_sftp: Option<Uuid>,
     pub edit: Option<Uuid>,
     pub delete: Option<Uuid>,
     pub new_connection: bool,
@@ -63,6 +64,12 @@ impl<'a> ConnectionTree<'a> {
                                 if ui.button("Open").clicked() {
                                     action.open = Some(c.id);
                                     ui.close();
+                                }
+                                if matches!(c.protocol, Protocol::Ssh | Protocol::Sftp) {
+                                    if ui.button("Open SFTP").clicked() {
+                                        action.open_sftp = Some(c.id);
+                                        ui.close();
+                                    }
                                 }
                                 if ui.button("Edit…").clicked() {
                                     action.edit = Some(c.id);

@@ -3,6 +3,7 @@ use egui_dock::TabViewer;
 use uuid::Uuid;
 
 use crate::proto::ssh::TunnelStatusKind;
+use crate::ui::sftp_tab::{SftpTab, render_sftp_tab};
 use crate::ui::terminal_widget::{TerminalEmulator, TerminalView};
 
 pub struct TerminalTab {
@@ -13,24 +14,53 @@ pub struct TerminalTab {
     pub closed_reported: bool,
 }
 
+pub enum EshTab {
+    Terminal(TerminalTab),
+    Sftp(SftpTab),
+}
+
+impl EshTab {
+    pub fn id(&self) -> Uuid {
+        match self {
+            EshTab::Terminal(t) => t.id,
+            EshTab::Sftp(t) => t.id,
+        }
+    }
+
+    pub fn title(&self) -> &str {
+        match self {
+            EshTab::Terminal(t) => &t.title,
+            EshTab::Sftp(t) => &t.title,
+        }
+    }
+}
+
 pub struct EshTabViewer;
 
 impl TabViewer for EshTabViewer {
-    type Tab = TerminalTab;
+    type Tab = EshTab;
 
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        WidgetText::from(&tab.title)
+        WidgetText::from(tab.title().to_string())
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        tab.emulator.pump();
-        render_tunnel_strip(ui, tab);
-        TerminalView { emulator: &mut tab.emulator }.show(ui);
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+        match tab {
+            EshTab::Terminal(t) => {
+                t.emulator.pump();
+                render_tunnel_strip(ui, t);
+                TerminalView { emulator: &mut t.emulator }.show(ui);
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+            }
+            EshTab::Sftp(t) => {
+                render_sftp_tab(ui, t);
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+            }
+        }
     }
 
     fn id(&mut self, tab: &mut Self::Tab) -> egui::Id {
-        egui::Id::new(tab.id)
+        egui::Id::new(tab.id())
     }
 
     fn clear_background(&self, _tab: &Self::Tab) -> bool {
