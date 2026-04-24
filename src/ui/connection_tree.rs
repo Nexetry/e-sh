@@ -1,7 +1,12 @@
-use egui::{CollapsingHeader, FontId, Frame, Id, ScrollArea, Sense, Stroke, Ui};
+use egui::{
+    CollapsingHeader, FontId, Frame, Id, LayerId, Order, PointerButton, ScrollArea, Sense, Stroke,
+    Ui, UiBuilder,
+};
 use uuid::Uuid;
 
 use crate::core::connection::{ConnectionStore, Protocol};
+
+const DRAG_THRESHOLD: f32 = 4.0;
 
 pub struct ConnectionTree<'a> {
     pub store: &'a ConnectionStore,
@@ -91,16 +96,9 @@ fn draw_group(
     items: &[&crate::core::connection::Connection],
     action: &mut TreeAction,
 ) {
-    let dragged_payload = ui.ctx().dragged_id().and_then(|id| {
-        items
-            .iter()
-            .find(|c| Id::new(("conn-drag", c.id)) == id)
-            .map(|c| c.id)
-    });
+    let dragged_payload: Option<Uuid> = ui.ctx().memory(|m| m.data.get_temp(Id::new("conn-dragging")));
 
     for c in items {
-        let drag_id = Id::new(("conn-drag", c.id));
-
         let drop_response = drop_zone_thin(ui);
         if let Some(dragged) = dragged_payload {
             if dragged != c.id
@@ -115,9 +113,7 @@ fn draw_group(
             }
         }
 
-        ui.dnd_drag_source(drag_id, c.id, |ui| {
-            draw_row(ui, c, action);
-        });
+        draw_row(ui, c, action, dragged_payload);
     }
 
     let tail = drop_zone_thin(ui);
@@ -132,6 +128,13 @@ fn draw_group(
                 });
             }
         }
+    }
+
+    if dragged_payload.is_some() && ui.input(|i| i.pointer.any_released()) {
+        ui.ctx().memory_mut(|m| {
+            m.data.remove::<Uuid>(Id::new("conn-dragging"));
+            m.data.remove::<egui::Pos2>(Id::new("conn-drag-press"));
+        });
     }
 }
 
@@ -165,7 +168,10 @@ fn draw_row(
     ui: &mut Ui,
     c: &crate::core::connection::Connection,
     action: &mut TreeAction,
+    dragged_payload: Option<Uuid>,
 ) {
+    let is_self_dragging = dragged_payload == Some(c.id);
+
     let frame = Frame::new()
         .inner_margin(egui::Margin {
             left: 4,
@@ -175,6 +181,93 @@ fn draw_row(
         })
         .corner_radius(4.0);
 
+    if is_self_dragging {
+        let layer_id = LayerId::new(Order::Tooltip, Id::new(("conn-drag-layer", c.id)));
+        let inner = ui.scope_builder(UiBuilder::new().layer_id(layer_id), |ui| {
+            paint_row_body(ui, c, frame, true);
+        });
+        if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+            let delta = pointer_pos - inner.response.rect.center();
+            ui.ctx()
+                .transform_layer_shapes(layer_id, egui::emath::TSTransform::from_translation(delta));
+        }
+        let _placeholder = paint_row_body(ui, c, frame, false);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        return;
+    }
+
+    let row_rect = paint_row_body(ui, c, frame, false);
+
+    let interact = ui.interact(
+        row_rect,
+        Id::new(("conn-row-i", c.id)),
+        Sense::click_and_drag(),
+    );
+
+    if interact.double_clicked() {
+        action.open = Some(c.id);
+    }
+
+    let primary_down = ui.input(|i| i.pointer.button_down(PointerButton::Primary));
+    let press_key = Id::new("conn-drag-press");
+    let dragging_key = Id::new("conn-dragging");
+
+    if interact.drag_started_by(PointerButton::Primary) {
+        if let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
+            ui.ctx().memory_mut(|m| m.data.insert_temp(press_key, pos));
+        }
+    }
+
+    if dragged_payload.is_none() && primary_down {
+        let press_origin: Option<egui::Pos2> = ui.ctx().memory(|m| m.data.get_temp(press_key));
+        if let (Some(origin), Some(current)) = (press_origin, ui.input(|i| i.pointer.interact_pos()))
+            && interact.is_pointer_button_down_on()
+            && (current - origin).length() >= DRAG_THRESHOLD
+        {
+            ui.ctx()
+                .memory_mut(|m| m.data.insert_temp(dragging_key, c.id));
+        }
+    }
+
+    if interact.hovered() && dragged_payload.is_none() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+
+    interact
+        .on_hover_text(format!("{} {}", c.protocol.label(), c.display_address()))
+        .context_menu(|ui| {
+            if ui.button("Open").clicked() {
+                action.open = Some(c.id);
+                ui.close();
+            }
+            if matches!(c.protocol, Protocol::Ssh | Protocol::Sftp)
+                && ui.button("Open SFTP").clicked()
+            {
+                action.open_sftp = Some(c.id);
+                ui.close();
+            }
+            if ui.button("Edit").clicked() {
+                action.edit = Some(c.id);
+                ui.close();
+            }
+            if ui.button("Duplicate").clicked() {
+                action.duplicate = Some(c.id);
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Delete").clicked() {
+                action.delete = Some(c.id);
+                ui.close();
+            }
+        });
+}
+
+fn paint_row_body(
+    ui: &mut Ui,
+    c: &crate::core::connection::Connection,
+    frame: Frame,
+    floating: bool,
+) -> egui::Rect {
     let mut prepared = frame.begin(ui);
     {
         let content_ui = &mut prepared.content_ui;
@@ -185,11 +278,11 @@ fn draw_row(
         content_ui.vertical(|ui| {
             ui.set_max_width(row_width);
 
-            ui.add(
-                egui::Label::new(egui::RichText::new(&c.name))
-                    .truncate()
-                    .selectable(false),
-            );
+            let mut name_text = egui::RichText::new(&c.name);
+            if floating {
+                name_text = name_text.strong();
+            }
+            ui.add(egui::Label::new(name_text).truncate().selectable(false));
 
             let subtitle_color = ui.visuals().weak_text_color();
             let subtitle_text = format!("{}  ·  {}", c.protocol.label(), c.display_address());
@@ -208,43 +301,14 @@ fn draw_row(
     let content_rect = prepared.content_ui.min_rect();
     let response = ui.allocate_rect(content_rect, Sense::hover());
 
-    if response.hovered() {
+    if floating {
+        let bg = ui.visuals().widgets.active.weak_bg_fill;
+        ui.painter().rect_filled(response.rect, 4.0, bg);
+    } else if response.hovered() {
         let bg = ui.visuals().widgets.hovered.weak_bg_fill;
         ui.painter().rect_filled(response.rect, 4.0, bg);
     }
     prepared.paint(ui);
 
-    let interact = ui.interact(response.rect, Id::new(("conn-row-i", c.id)), Sense::click());
-
-    if interact.double_clicked() {
-        action.open = Some(c.id);
-    }
-
-    interact
-        .on_hover_text(format!("{} {}", c.protocol.label(), c.display_address()))
-        .context_menu(|ui| {
-            if ui.button("Open").clicked() {
-                action.open = Some(c.id);
-                ui.close();
-            }
-            if matches!(c.protocol, Protocol::Ssh | Protocol::Sftp) {
-                if ui.button("Open SFTP").clicked() {
-                    action.open_sftp = Some(c.id);
-                    ui.close();
-                }
-            }
-            if ui.button("Edit").clicked() {
-                action.edit = Some(c.id);
-                ui.close();
-            }
-            if ui.button("Duplicate").clicked() {
-                action.duplicate = Some(c.id);
-                ui.close();
-            }
-            ui.separator();
-            if ui.button("Delete").clicked() {
-                action.delete = Some(c.id);
-                ui.close();
-            }
-        });
+    response.rect
 }
