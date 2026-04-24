@@ -197,7 +197,7 @@ pwsh scripts/build-release.ps1
 Output:
 
 - **macOS**:
-  - `dist/e-sh-<version>-macos-universal.tar.gz` — universal arm64+x86*64 `e-sh.app` bundle, ad-hoc signed (on first launch Gatekeeper may warn — right-click → \_Open* to bypass)
+  - `dist/e-sh-<version>-macos-universal.tar.gz` — universal arm64+x86_64 `e-sh.app` bundle, ad-hoc signed (Gatekeeper will warn on first launch — see [First launch on macOS](#first-launch-on-macos))
   - `dist/e-sh-<version>-macos-universal.dmg` — drag-to-Applications installer (requires [`create-dmg`](https://github.com/create-dmg/create-dmg); falls back to plain `hdiutil` if unavailable)
 - **Linux**:
   - `dist/e-sh-<version>-linux-x86_64.tar.gz` — raw `e-sh` binary + README
@@ -225,6 +225,43 @@ For automated cross-platform release builds on git tag push (`vX.Y.Z`), the
 GitHub Actions workflow at `.github/workflows/release.yml` builds all three
 targets on their native runners (`macos-latest`, `ubuntu-latest`,
 `windows-latest`) and attaches the artifacts to a GitHub Release.
+
+### First launch on macOS
+
+`e-sh` is **ad-hoc signed**, not signed with a paid Apple Developer ID, so on
+first launch macOS Gatekeeper will show:
+
+> _"Apple could not verify 'e-sh' is free of malware that may harm your Mac
+> or compromise your privacy."_
+
+This is expected for any unsigned / ad-hoc-signed app. To bypass:
+
+**Easiest — Finder**
+
+1. Open Finder, locate `e-sh.app` (Applications, `dist/`, wherever you put it).
+2. **Right-click** (or Ctrl-click) the app → **Open**.
+3. Click **Open** in the warning dialog.
+
+macOS remembers this choice and won't prompt again for that copy.
+
+**If right-click "Open" is blocked (macOS 14.4+ / Sequoia)**
+
+```bash
+xattr -dr com.apple.quarantine /Applications/e-sh.app
+```
+
+Adjust the path if you installed it elsewhere. Then double-click normally.
+
+**If macOS still complains**
+
+Open **System Settings → Privacy & Security**, scroll down — there will be a
+message like _"e-sh was blocked"_ with an **Open Anyway** button. Click it
+once.
+
+> The Gatekeeper warning will reappear every time you install a new build
+> (each new download / install gets a fresh quarantine flag). Until proper
+> Developer ID signing + notarization is wired up, repeat the bypass per
+> install.
 
 ## Usage
 
@@ -361,6 +398,16 @@ only), so treat the `recordings/` directory like any other log directory:
 anything the server printed (file contents you `cat`-ed, tokens the server
 echoed, etc.) will be in there. Recording is **opt-in per connection** and
 off by default.
+
+**Q: macOS warns "Apple could not verify 'e-sh' is free of malware" — is the app unsafe?**
+No. `e-sh` is **ad-hoc signed** (not signed with a paid Apple Developer ID),
+so Gatekeeper cannot verify the publisher and shows this warning on first
+launch for any download. The binary itself is the same one you (or GitHub
+Actions) built from this source repo. To bypass, see
+[First launch on macOS](#first-launch-on-macos) — short version: right-click
+→ Open, or `xattr -dr com.apple.quarantine /Applications/e-sh.app`.
+The warning will reappear after each fresh install until proper Developer ID
+signing + notarization is added to the release pipeline (planned).
 
 **Q: macOS shows an `AutoFill (e-sh)` process in Activity Monitor — is it accessing my Keychain?**
 No. `e-sh` does not link `Security.framework` and does not call any Keychain
