@@ -19,7 +19,7 @@ use e_sh::proto::sftp::spawn_sftp_session;
 use e_sh::proto::ssh::{HostKeyContext, spawn_session};
 use e_sh::recording::{self, Kind as RecordingKind, StartParams};
 use e_sh::ui::command_palette::{Command, CommandItem, CommandPalette, PaletteResult};
-use e_sh::ui::connection_tree::ConnectionTree;
+use e_sh::ui::connection_tree::{ConnectionTree, ReorderRequest};
 use e_sh::ui::dock::{EshTab, EshTabViewer, TabAction, TerminalTab};
 use e_sh::ui::edit_dialog::EditConnectionDialog;
 use e_sh::ui::host_key_prompt::{HostKeyPromptResult, HostKeyPromptUi};
@@ -729,6 +729,12 @@ impl App for EshApp {
                             self.toaster.warn("Deleted", removed.name);
                         }
                     }
+                    if let Some(req) = action.reorder {
+                        if apply_reorder(&mut self.store, &req) {
+                            self.persist();
+                            self.status = "Reordered connections".to_string();
+                        }
+                    }
                 });
         }
 
@@ -878,4 +884,47 @@ fn whoami_user() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "user".to_string())
+}
+
+fn apply_reorder(store: &mut ConnectionStore, req: &ReorderRequest) -> bool {
+    let from = match store.connections.iter().position(|c| c.id == req.dragged) {
+        Some(i) => i,
+        None => return false,
+    };
+    let mut moved = store.connections.remove(from);
+
+    let new_group = if req.target_group == "Default" {
+        None
+    } else {
+        Some(req.target_group.clone())
+    };
+    let group_changed = moved.group != new_group;
+    moved.group = new_group;
+
+    let insert_at = match req.target {
+        Some(target_id) => store
+            .connections
+            .iter()
+            .position(|c| c.id == target_id)
+            .unwrap_or(store.connections.len()),
+        None => {
+            let group_key = req.target_group.as_str();
+            let last_in_group = store
+                .connections
+                .iter()
+                .rposition(|c| c.group.as_deref().unwrap_or("Default") == group_key);
+            match last_in_group {
+                Some(i) => i + 1,
+                None => store.connections.len(),
+            }
+        }
+    };
+
+    if !group_changed && insert_at == from {
+        store.connections.insert(from, moved);
+        return false;
+    }
+
+    store.connections.insert(insert_at, moved);
+    true
 }

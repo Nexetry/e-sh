@@ -1,10 +1,19 @@
-use egui::{CollapsingHeader, ScrollArea, Ui};
+use egui::{CollapsingHeader, FontId, Frame, Id, ScrollArea, Sense, Stroke, Ui};
 use uuid::Uuid;
 
 use crate::core::connection::{ConnectionStore, Protocol};
 
 pub struct ConnectionTree<'a> {
     pub store: &'a ConnectionStore,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReorderRequest {
+    pub dragged: Uuid,
+    /// `Some(id)` = insert before this connection. `None` = append to the end
+    /// of `target_group` (used for end-of-group drops, including empty groups).
+    pub target: Option<Uuid>,
+    pub target_group: String,
 }
 
 #[derive(Default)]
@@ -16,6 +25,7 @@ pub struct TreeAction {
     pub delete: Option<Uuid>,
     pub new_connection: bool,
     pub open_recordings: bool,
+    pub reorder: Option<ReorderRequest>,
 }
 
 impl<'a> ConnectionTree<'a> {
@@ -45,59 +55,196 @@ impl<'a> ConnectionTree<'a> {
             ui.separator();
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 ScrollArea::vertical().show(ui, |ui| {
-                    let mut groups: std::collections::BTreeMap<String, Vec<&_>> =
-                        Default::default();
+                    let mut group_order: Vec<String> = Vec::new();
+                    let mut groups: std::collections::HashMap<String, Vec<&_>> =
+                        std::collections::HashMap::new();
                     for c in &self.store.connections {
-                        groups
-                            .entry(c.group.clone().unwrap_or_else(|| "Default".to_string()))
-                            .or_default()
-                            .push(c);
+                        let key = c.group.clone().unwrap_or_else(|| "Default".to_string());
+                        if !groups.contains_key(&key) {
+                            group_order.push(key.clone());
+                        }
+                        groups.entry(key).or_default().push(c);
                     }
-                    if groups.is_empty() {
+                    if group_order.is_empty() {
                         ui.weak("No saved connections.");
                         ui.weak("Click ＋ above to add one.");
                     }
-                    for (group, items) in groups {
-                        CollapsingHeader::new(group).default_open(true).show(ui, |ui| {
-                            for c in items {
-                                let label = format!("{}  ·  {}", c.name, c.display_address());
-                                let resp = ui.selectable_label(false, label).on_hover_text(
-                                    format!("{} {}", c.protocol.label(), c.display_address()),
-                                );
-                                if resp.double_clicked() {
-                                    action.open = Some(c.id);
-                                }
-                                resp.context_menu(|ui| {
-                                    if ui.button("Open").clicked() {
-                                        action.open = Some(c.id);
-                                        ui.close();
-                                    }
-                                    if matches!(c.protocol, Protocol::Ssh | Protocol::Sftp) {
-                                        if ui.button("Open SFTP").clicked() {
-                                            action.open_sftp = Some(c.id);
-                                            ui.close();
-                                        }
-                                    }
-                                    if ui.button("Edit").clicked() {
-                                        action.edit = Some(c.id);
-                                        ui.close();
-                                    }
-                                    if ui.button("Duplicate").clicked() {
-                                        action.duplicate = Some(c.id);
-                                        ui.close();
-                                    }
-                                    ui.separator();
-                                    if ui.button("Delete").clicked() {
-                                        action.delete = Some(c.id);
-                                        ui.close();
-                                    }
-                                });
-                            }
-                        });
+                    for group in group_order {
+                        let items = groups.remove(&group).unwrap_or_default();
+                        let group_clone = group.clone();
+                        CollapsingHeader::new(&group)
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                draw_group(ui, &group_clone, &items, &mut action);
+                            });
                     }
                 });
             });
         });
         action
     }
+}
+
+fn draw_group(
+    ui: &mut Ui,
+    group: &str,
+    items: &[&crate::core::connection::Connection],
+    action: &mut TreeAction,
+) {
+    let dragged_payload = ui.ctx().dragged_id().and_then(|id| {
+        items
+            .iter()
+            .find(|c| Id::new(("conn-drag", c.id)) == id)
+            .map(|c| c.id)
+    });
+
+    for c in items {
+        let drag_id = Id::new(("conn-drag", c.id));
+
+        let drop_response = drop_zone_thin(ui);
+        if let Some(dragged) = dragged_payload {
+            if dragged != c.id
+                && drop_response.contains_pointer
+                && ui.input(|i| i.pointer.any_released())
+            {
+                action.reorder = Some(ReorderRequest {
+                    dragged,
+                    target: Some(c.id),
+                    target_group: group.to_string(),
+                });
+            }
+        }
+
+        ui.dnd_drag_source(drag_id, c.id, |ui| {
+            draw_row(ui, c, action);
+        });
+    }
+
+    let tail = drop_zone_thin(ui);
+    if let Some(dragged) = dragged_payload {
+        if tail.contains_pointer && ui.input(|i| i.pointer.any_released()) {
+            let already_tail = items.last().map(|c| c.id) == Some(dragged);
+            if !already_tail {
+                action.reorder = Some(ReorderRequest {
+                    dragged,
+                    target: None,
+                    target_group: group.to_string(),
+                });
+            }
+        }
+    }
+}
+
+struct DropZoneResponse {
+    contains_pointer: bool,
+}
+
+fn drop_zone_thin(ui: &mut Ui) -> DropZoneResponse {
+    let height = 4.0;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::hover());
+    let dragging_anything = ui.ctx().dragged_id().is_some();
+    if response.contains_pointer() && dragging_anything {
+        let painter = ui.painter_at(rect);
+        let y = rect.center().y;
+        let accent = ui.visuals().selection.bg_fill;
+        painter.line_segment(
+            [
+                egui::pos2(rect.left() + 4.0, y),
+                egui::pos2(rect.right() - 4.0, y),
+            ],
+            Stroke::new(2.0, accent),
+        );
+    }
+    DropZoneResponse {
+        contains_pointer: response.contains_pointer(),
+    }
+}
+
+fn draw_row(
+    ui: &mut Ui,
+    c: &crate::core::connection::Connection,
+    action: &mut TreeAction,
+) {
+    let frame = Frame::new()
+        .inner_margin(egui::Margin {
+            left: 4,
+            right: 4,
+            top: 2,
+            bottom: 2,
+        })
+        .corner_radius(4.0);
+
+    let mut prepared = frame.begin(ui);
+    {
+        let content_ui = &mut prepared.content_ui;
+        content_ui.set_min_width(content_ui.available_width());
+
+        let row_width = content_ui.available_width();
+
+        content_ui.vertical(|ui| {
+            ui.set_max_width(row_width);
+
+            ui.add(
+                egui::Label::new(egui::RichText::new(&c.name))
+                    .truncate()
+                    .selectable(false),
+            );
+
+            let subtitle_color = ui.visuals().weak_text_color();
+            let subtitle_text = format!("{}  ·  {}", c.protocol.label(), c.display_address());
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(subtitle_text)
+                        .color(subtitle_color)
+                        .font(FontId::proportional(10.5)),
+                )
+                .truncate()
+                .selectable(false),
+            );
+        });
+    }
+
+    let content_rect = prepared.content_ui.min_rect();
+    let response = ui.allocate_rect(content_rect, Sense::hover());
+
+    if response.hovered() {
+        let bg = ui.visuals().widgets.hovered.weak_bg_fill;
+        ui.painter().rect_filled(response.rect, 4.0, bg);
+    }
+    prepared.paint(ui);
+
+    let interact = ui.interact(response.rect, Id::new(("conn-row-i", c.id)), Sense::click());
+
+    if interact.double_clicked() {
+        action.open = Some(c.id);
+    }
+
+    interact
+        .on_hover_text(format!("{} {}", c.protocol.label(), c.display_address()))
+        .context_menu(|ui| {
+            if ui.button("Open").clicked() {
+                action.open = Some(c.id);
+                ui.close();
+            }
+            if matches!(c.protocol, Protocol::Ssh | Protocol::Sftp) {
+                if ui.button("Open SFTP").clicked() {
+                    action.open_sftp = Some(c.id);
+                    ui.close();
+                }
+            }
+            if ui.button("Edit").clicked() {
+                action.edit = Some(c.id);
+                ui.close();
+            }
+            if ui.button("Duplicate").clicked() {
+                action.duplicate = Some(c.id);
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Delete").clicked() {
+                action.delete = Some(c.id);
+                ui.close();
+            }
+        });
 }

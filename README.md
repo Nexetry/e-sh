@@ -30,7 +30,7 @@ the keyboard-first, low-overhead feel that power users expect.
 - Toast notifications (info / success / warn / error) for connect, disconnect, save, delete, host-key, persistence, and session-end events
 - Persistent TOML store for connections (per-OS config dir) with transparent backward-compatible migration
 - **SSH** interactive shell:
-  - `russh` 0.60 transport, `tokio` async runtime
+  - `russh` 0.55 transport, `tokio` async runtime
   - `alacritty_terminal` 0.26 emulator rendered through a custom egui widget
   - Password, public-key, and **SSH agent** authentication (uses `$SSH_AUTH_SOCK`,
     tries each loaded identity in order until one is accepted)
@@ -99,12 +99,12 @@ the keyboard-first, low-overhead feel that power users expect.
 
 ## Supported Protocols
 
-| Protocol | Purpose                       | Status                                                                                                                                                             |
-| -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Protocol | Purpose                       | Status                                                                                                                                                                   |
+| -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | SSH      | Interactive remote shell      | **Working** (password + pubkey + agent, TOFU, tunnels `-L`/`-R`/`-D`, chained ProxyJump, scrollback + copy/paste, encrypted secret store, opt-in asciicast v2 recording) |
-| SFTP     | Secure file transfer / browse | **Working** (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns, cancel, opt-in JSONL audit recording)            |
-| RDP      | Remote desktop (Windows)      | Planned                                                                                                                                                            |
-| VNC      | Remote desktop (generic)      | Planned                                                                                                                                                            |
+| SFTP     | Secure file transfer / browse | **Working** (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns, cancel, opt-in JSONL audit recording)                  |
+| RDP      | Remote desktop (Windows)      | Planned                                                                                                                                                                  |
+| VNC      | Remote desktop (generic)      | Planned                                                                                                                                                                  |
 
 ## Architecture
 
@@ -147,7 +147,7 @@ VS Code "Draw.io Integration" extension.
 - **Language:** Rust (edition 2024, toolchain `1.85+`)
 - **UI:** [`egui`](https://github.com/emilk/egui) `0.34`, `eframe` `0.34`, `egui_dock` `0.19`, `egui_extras` `0.34`
 - **Async runtime:** `tokio` `1`
-- **SSH:** `russh` `0.60`
+- **SSH:** `russh` `0.55`
 - **SFTP:** `russh-sftp` `2.1.1`
 - **Terminal emulator:** `alacritty_terminal` `0.26`
 - **File picker:** `rfd` `0.15`
@@ -155,7 +155,8 @@ VS Code "Draw.io Integration" extension.
 - **Config:** TOML via `serde` + `toml`
 - **Paths:** `directories` `6`
 - **Logging:** `tracing` + `tracing-subscriber`
-- **Planned:** `ironrdp`, `vnc-rs`
+- **Planned:** `vnc-rs`
+- **RDP:** `ironrdp` `0.14` (`ironrdp-tls`, `ironrdp-async`, `ironrdp-tokio`)
 
 ## Getting Started
 
@@ -343,6 +344,7 @@ persist host keys), but expect breaking changes to config formats and APIs.
 - [x] Command palette + keyboard-first navigation
 - [x] Native installers (`.dmg` / `.deb` / `.msi`) in the release pipeline
 - [x] Tabbed multi-session UI polish (split panes, drag-to-reorder)
+- [x] Connections tab UI polish (drag-to-reorder, grey, ellipsised and small text sub title)
 - [x] Session recording / logging (opt-in)
 - [ ] RDP adapter
 - [ ] VNC adapter
