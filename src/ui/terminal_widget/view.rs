@@ -1,7 +1,7 @@
 use alacritty_terminal::index::Side;
 use egui::{
-    Area, Color32, CornerRadius, FontFamily, FontId, Frame, Key, Modifiers, Order, Pos2, Rect,
-    Sense, Stroke, TextEdit, TextStyle, Ui, Vec2,
+    Area, Color32, CornerRadius, EventFilter, FontFamily, FontId, Frame, Key, Modifiers, Order,
+    Pos2, Rect, Sense, Stroke, TextEdit, TextStyle, Ui, Vec2,
 };
 
 use super::TerminalEmulator;
@@ -32,6 +32,22 @@ impl<'a> TerminalView<'a> {
             Vec2::new(cols as f32 * cell_width, rows as f32 * row_height),
             Sense::click_and_drag(),
         );
+
+        // While the terminal has focus, capture Tab (and arrow keys) so they reach the
+        // remote shell instead of moving egui's keyboard focus to other widgets/buttons.
+        if response.has_focus() {
+            ui.memory_mut(|m| {
+                m.set_focus_lock_filter(
+                    response.id,
+                    EventFilter {
+                        tab: true,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: false,
+                    },
+                );
+            });
+        }
 
         let origin = response.rect.min;
         let bg_default = Color32::from_rgb(0x12, 0x12, 0x14);
