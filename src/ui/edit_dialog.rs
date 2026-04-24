@@ -277,7 +277,6 @@ impl EditConnectionDialog {
             RichText::new(match self.draft.protocol {
                 Protocol::Ssh => "SSH: server output is saved as asciicast v2 (gzipped).",
                 Protocol::Sftp => "SFTP: operations are saved as JSON Lines (gzipped).",
-                _ => "",
             })
             .weak(),
         );
@@ -474,7 +473,7 @@ impl EditConnectionDialog {
                     .selected_text(self.draft.protocol.label())
                     .width(180.0)
                     .show_ui(ui, |ui| {
-                        for p in [Protocol::Ssh, Protocol::Sftp, Protocol::Rdp, Protocol::Vnc] {
+                        for p in [Protocol::Ssh, Protocol::Sftp] {
                             if ui
                                 .selectable_value(&mut self.draft.protocol, p, p.label())
                                 .changed()

@@ -3,20 +3,20 @@
 > A unified, cross-platform remote connection manager built in Rust with `egui`.
 
 `e-sh` (the **e** stands for **egui**) is a single-binary desktop application for
-managing and launching remote sessions over **SSH**, **SFTP**, **RDP**, and **VNC**
-from one consistent interface.
+managing and launching remote sessions over **SSH** and **SFTP** from one
+consistent interface.
 
 ---
 
 ## Overview
 
 Managing remote machines often requires juggling several different clients: an SSH
-terminal, an SFTP file browser, an RDP viewer, and a VNC client. `e-sh` brings these
-workflows together into a single native application that is fast to launch, easy to
-script, and consistent across Linux, macOS, and Windows.
+terminal and an SFTP file browser. `e-sh` brings these workflows together into a
+single native application that is fast to launch, easy to script, and consistent
+across Linux, macOS, and Windows.
 
-The goal is **one binary, one UI, every protocol you need** — without sacrificing
-the keyboard-first, low-overhead feel that power users expect.
+The goal is **one binary, one UI, both protocols you need every day** — without
+sacrificing the keyboard-first, low-overhead feel that power users expect.
 
 ## Features
 
@@ -95,7 +95,7 @@ the keyboard-first, low-overhead feel that power users expect.
 
 ### Planned
 
-- RDP and VNC backends
+- Plugin / scripting hooks
 
 ## Supported Protocols
 
@@ -103,8 +103,6 @@ the keyboard-first, low-overhead feel that power users expect.
 | -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | SSH      | Interactive remote shell      | **Working** (password + pubkey + agent, TOFU, tunnels `-L`/`-R`/`-D`, chained ProxyJump, scrollback + copy/paste, encrypted secret store, opt-in asciicast v2 recording) |
 | SFTP     | Secure file transfer / browse | **Working** (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns, cancel, opt-in JSONL audit recording)                  |
-| RDP      | Remote desktop (Windows)      | Planned                                                                                                                                                                  |
-| VNC      | Remote desktop (generic)      | Planned                                                                                                                                                                  |
 
 ## Architecture
 
@@ -155,8 +153,6 @@ VS Code "Draw.io Integration" extension.
 - **Config:** TOML via `serde` + `toml`
 - **Paths:** `directories` `6`
 - **Logging:** `tracing` + `tracing-subscriber`
-- **Planned:** `vnc-rs`
-- **RDP:** `ironrdp` `0.14` (`ironrdp-tls`, `ironrdp-async`, `ironrdp-tokio`)
 
 ## Getting Started
 
@@ -346,8 +342,6 @@ persist host keys), but expect breaking changes to config formats and APIs.
 - [x] Tabbed multi-session UI polish (split panes, drag-to-reorder)
 - [x] Connections tab UI polish (drag-to-reorder, grey, ellipsised and small text sub title)
 - [x] Session recording / logging (opt-in)
-- [ ] RDP adapter
-- [ ] VNC adapter
 - [ ] Plugin / scripting hooks
 
 ## Screenshots

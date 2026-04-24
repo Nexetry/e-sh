@@ -6,8 +6,6 @@ use uuid::Uuid;
 pub enum Protocol {
     Ssh,
     Sftp,
-    Rdp,
-    Vnc,
 }
 
 impl Protocol {
@@ -15,16 +13,12 @@ impl Protocol {
         match self {
             Protocol::Ssh => "SSH",
             Protocol::Sftp => "SFTP",
-            Protocol::Rdp => "RDP",
-            Protocol::Vnc => "VNC",
         }
     }
 
     pub fn default_port(self) -> u16 {
         match self {
             Protocol::Ssh | Protocol::Sftp => 22,
-            Protocol::Rdp => 3389,
-            Protocol::Vnc => 5900,
         }
     }
 }

@@ -32,9 +32,6 @@
         <mxCell id="ui_files" value="File Browser&#10;(SFTP)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1">
           <mxGeometry x="760" y="150" width="140" height="70" as="geometry" />
         </mxCell>
-        <mxCell id="ui_desktop" value="Desktop View&#10;(RDP / VNC)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1">
-          <mxGeometry x="920" y="150" width="140" height="70" as="geometry" />
-        </mxCell>
 
         <!-- Core / Application Layer -->
         <mxCell id="core_layer" value="Application Core" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
@@ -62,12 +59,6 @@
         </mxCell>
         <mxCell id="proto_sftp" value="SFTP Adapter&#10;(russh-sftp)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="1">
           <mxGeometry x="430" y="510" width="180" height="70" as="geometry" />
-        </mxCell>
-        <mxCell id="proto_rdp" value="RDP Adapter&#10;(ironrdp)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="1">
-          <mxGeometry x="630" y="510" width="180" height="70" as="geometry" />
-        </mxCell>
-        <mxCell id="proto_vnc" value="VNC Adapter&#10;(vnc-rs)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="1">
-          <mxGeometry x="830" y="510" width="180" height="70" as="geometry" />
         </mxCell>
 
         <!-- Transport / Network -->
@@ -99,12 +90,6 @@
         <mxCell id="remote_ssh" value="SSH/SFTP Server" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
           <mxGeometry x="260" y="755" width="180" height="35" as="geometry" />
         </mxCell>
-        <mxCell id="remote_rdp" value="Windows RDP Host" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
-          <mxGeometry x="540" y="755" width="180" height="35" as="geometry" />
-        </mxCell>
-        <mxCell id="remote_vnc" value="VNC Server" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
-          <mxGeometry x="820" y="755" width="180" height="35" as="geometry" />
-        </mxCell>
 
         <!-- Edges: User -> UI -->
         <mxCell id="e_user_ui" style="endArrow=classic;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="user" target="ui_layer">
@@ -122,9 +107,6 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e_ui_core4" style="endArrow=classic;html=1;" edge="1" parent="1" source="ui_files" target="core_dispatch">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="e_ui_core5" style="endArrow=classic;html=1;" edge="1" parent="1" source="ui_desktop" target="core_dispatch">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
@@ -146,12 +128,6 @@
         <mxCell id="e_disp_sftp" style="endArrow=classic;html=1;" edge="1" parent="1" source="core_dispatch" target="proto_sftp">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_disp_rdp" style="endArrow=classic;html=1;" edge="1" parent="1" source="core_dispatch" target="proto_rdp">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="e_disp_vnc" style="endArrow=classic;html=1;" edge="1" parent="1" source="core_dispatch" target="proto_vnc">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
 
         <!-- Edges: Protocol -> Network -->
         <mxCell id="e_ssh_net" style="endArrow=classic;html=1;" edge="1" parent="1" source="proto_ssh" target="net_layer">
@@ -160,21 +136,9 @@
         <mxCell id="e_sftp_net" style="endArrow=classic;html=1;" edge="1" parent="1" source="proto_sftp" target="net_layer">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_rdp_net" style="endArrow=classic;html=1;" edge="1" parent="1" source="proto_rdp" target="net_layer">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="e_vnc_net" style="endArrow=classic;html=1;" edge="1" parent="1" source="proto_vnc" target="net_layer">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
 
         <!-- Edges: Network -> Remote -->
         <mxCell id="e_net_remote_ssh" style="endArrow=classic;html=1;" edge="1" parent="1" source="net_inner" target="remote_ssh">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="e_net_remote_rdp" style="endArrow=classic;html=1;" edge="1" parent="1" source="net_inner" target="remote_rdp">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="e_net_remote_vnc" style="endArrow=classic;html=1;" edge="1" parent="1" source="net_inner" target="remote_vnc">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
