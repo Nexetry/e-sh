@@ -7,6 +7,7 @@ use crate::ui::recordings_view::{RecordingsAction, RecordingsTab, render_recordi
 use crate::ui::rdp_tab::{RdpTab, render_rdp_tab};
 use crate::ui::sftp_tab::{SftpTab, render_sftp_tab};
 use crate::ui::terminal_widget::{TerminalEmulator, TerminalView};
+use crate::ui::vnc_tab::{VncTab, render_vnc_tab};
 
 pub struct TerminalTab {
     pub id: Uuid,
@@ -22,6 +23,7 @@ pub enum EshTab {
     Terminal(TerminalTab),
     Sftp(SftpTab),
     Rdp(RdpTab),
+    Vnc(VncTab),
     Recordings(RecordingsTab),
 }
 
@@ -31,6 +33,7 @@ impl EshTab {
             EshTab::Terminal(t) => t.id,
             EshTab::Sftp(t) => t.id,
             EshTab::Rdp(t) => t.id,
+            EshTab::Vnc(t) => t.id,
             EshTab::Recordings(t) => t.id,
         }
     }
@@ -40,6 +43,7 @@ impl EshTab {
             EshTab::Terminal(t) => &t.title,
             EshTab::Sftp(t) => &t.title,
             EshTab::Rdp(t) => &t.title,
+            EshTab::Vnc(t) => &t.title,
             EshTab::Recordings(t) => &t.title,
         }
     }
@@ -49,6 +53,7 @@ impl EshTab {
             EshTab::Terminal(t) => t.source_connection,
             EshTab::Sftp(t) => t.source_connection,
             EshTab::Rdp(t) => t.source_connection,
+            EshTab::Vnc(t) => t.source_connection,
             EshTab::Recordings(_) => None,
         }
     }
@@ -58,6 +63,7 @@ impl EshTab {
             EshTab::Terminal(t) => t.tab_color,
             EshTab::Sftp(t) => t.tab_color,
             EshTab::Rdp(t) => t.tab_color,
+            EshTab::Vnc(t) => t.tab_color,
             EshTab::Recordings(_) => None,
         }
     }
@@ -67,6 +73,7 @@ impl EshTab {
             EshTab::Terminal(t) => t.tab_color = color,
             EshTab::Sftp(t) => t.tab_color = color,
             EshTab::Rdp(t) => t.tab_color = color,
+            EshTab::Vnc(t) => t.tab_color = color,
             EshTab::Recordings(_) => {}
         }
     }
@@ -77,6 +84,10 @@ impl EshTab {
 
     pub fn is_rdp(&self) -> bool {
         matches!(self, EshTab::Rdp(_))
+    }
+
+    pub fn is_vnc(&self) -> bool {
+        matches!(self, EshTab::Vnc(_))
     }
 }
 
@@ -133,6 +144,10 @@ impl TabViewer for EshTabViewer {
                 render_rdp_tab(ui, t);
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
             }
+            EshTab::Vnc(t) => {
+                render_vnc_tab(ui, t);
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+            }
             EshTab::Recordings(t) => {
                 let act = render_recordings_tab(ui, t);
                 let has = act.toast_info.is_some()
@@ -162,6 +177,7 @@ impl TabViewer for EshTabViewer {
         let source = tab.source_connection();
         let is_sftp = tab.is_sftp();
         let _is_rdp = tab.is_rdp();
+        let _is_vnc = tab.is_vnc();
         let current_color = tab.tab_color();
 
         let duplicate_enabled = source.is_some();

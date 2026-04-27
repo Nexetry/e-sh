@@ -213,6 +213,8 @@ impl EditConnectionDialog {
                         ui.add_space(12.0);
                         self.sidebar_group(ui, "Advanced");
                         self.sidebar_item(ui, Section::Display);
+                    } else if matches!(self.draft.protocol, Protocol::Vnc) {
+                        // VNC has no extra sidebar sections beyond Connection + Auth
                     } else {
                         ui.add_space(12.0);
                         self.sidebar_group(ui, "Common");
@@ -284,7 +286,7 @@ impl EditConnectionDialog {
         {
             self.section = Section::Connection;
         }
-        if matches!(self.draft.protocol, Protocol::Rdp)
+        if matches!(self.draft.protocol, Protocol::Rdp | Protocol::Vnc)
             && matches!(
                 self.section,
                 Section::JumpHost | Section::Tunnels | Section::Session | Section::Recording
@@ -319,6 +321,7 @@ impl EditConnectionDialog {
                 Protocol::Ssh => "SSH: server output is saved as asciicast v2 (gzipped).",
                 Protocol::Sftp => "SFTP: operations are saved as JSON Lines (gzipped).",
                 Protocol::Rdp => "Recording is not available for RDP connections.",
+                Protocol::Vnc => "Recording is not available for VNC connections.",
             })
             .weak(),
         );
@@ -515,7 +518,7 @@ impl EditConnectionDialog {
                     .selected_text(self.draft.protocol.label())
                     .width(180.0)
                     .show_ui(ui, |ui| {
-                        for p in [Protocol::Ssh, Protocol::Sftp, Protocol::Rdp] {
+                        for p in [Protocol::Ssh, Protocol::Sftp, Protocol::Rdp, Protocol::Vnc] {
                             if ui
                                 .selectable_value(&mut self.draft.protocol, p, p.label())
                                 .changed()
