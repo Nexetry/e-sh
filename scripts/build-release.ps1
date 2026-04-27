@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $BinName = 'e-sh'
+$RdpBinName = 'e-sh-rdp'
 $Version = (Select-String -Path 'Cargo.toml' -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
 $Root = Resolve-Path "$PSScriptRoot\.."
 $Dist = Join-Path $Root 'dist'
@@ -8,8 +9,15 @@ New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 
 Write-Host ">>> Windows x86_64 ($BinName $Version)"
 rustup target add x86_64-pc-windows-msvc | Out-Null
+
+# Main binary
 cargo build --release --target x86_64-pc-windows-msvc
 if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+
+# RDP helper binary
+Write-Host "    ... building $RdpBinName"
+cargo build --release --target x86_64-pc-windows-msvc --manifest-path "$Root\e-sh-rdp\Cargo.toml"
+if ($LASTEXITCODE -ne 0) { throw "cargo build (e-sh-rdp) failed" }
 
 $StageName = "$BinName-$Version-windows-x86_64"
 $Stage = Join-Path $Dist $StageName
@@ -17,6 +25,7 @@ if (Test-Path $Stage) { Remove-Item -Recurse -Force $Stage }
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
 
 Copy-Item "target\x86_64-pc-windows-msvc\release\$BinName.exe" $Stage
+Copy-Item "$Root\e-sh-rdp\target\x86_64-pc-windows-msvc\release\$RdpBinName.exe" $Stage
 if (Test-Path 'README.md') { Copy-Item 'README.md' $Stage }
 
 $Zip = Join-Path $Dist "$StageName.zip"

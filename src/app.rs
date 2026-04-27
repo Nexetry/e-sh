@@ -15,6 +15,7 @@ use e_sh::config::store::{
     ConfigPaths, forget_secrets, hydrate_after_unlock, load_connections, save_connections,
 };
 use e_sh::core::connection::{AuthMethod, Connection, ConnectionStore, Protocol};
+use e_sh::proto::rdp::spawn_rdp_session;
 use e_sh::proto::sftp::spawn_sftp_session;
 use e_sh::proto::ssh::{HostKeyContext, spawn_session};
 use e_sh::recording::{self, Kind as RecordingKind, StartParams};
@@ -28,6 +29,7 @@ use e_sh::ui::master_password_prompt::{
     MasterPasswordMode, MasterPasswordPromptUi, MasterPasswordResult,
 };
 use e_sh::ui::recordings_view::RecordingsTab;
+use e_sh::ui::rdp_tab::RdpTab;
 use e_sh::ui::sftp_tab::SftpTab;
 use e_sh::ui::status_bar::StatusBar;
 use e_sh::ui::terminal_widget::TerminalEmulator;
@@ -195,6 +197,10 @@ impl EshApp {
             self.open_sftp_tab(id);
             return;
         }
+        if matches!(conn.protocol, Protocol::Rdp) {
+            self.launch_rdp(id);
+            return;
+        }
         let chain = match self.store.resolve_jump_chain(id) {
             Ok(c) => c,
             Err(e) => {
@@ -318,6 +324,34 @@ impl EshApp {
         self.push_tab(tab);
         self.status = format!("Opened SFTP {}", connection_label);
         self.toaster.info("SFTP", connection_label);
+    }
+
+    fn launch_rdp(&mut self, id: Uuid) {
+        let Some(conn) = self.store.find(id).cloned() else {
+            return;
+        };
+        if connection_needs_secret(&conn) && self.secrets.is_none() {
+            self.pending.push_back(PendingAction::Open(id));
+            self.ensure_secrets_unlocked(if SecretStore::file_exists(&self.paths.config_dir) {
+                MasterPasswordMode::Unlock
+            } else {
+                MasterPasswordMode::Create
+            });
+            return;
+        }
+        let label = format!("{}@{}:{}", conn.username, conn.host, conn.port);
+        let title = format!("{} (RDP)", conn.name);
+        let handle = spawn_rdp_session(&self.rt, conn);
+        let tab = EshTab::Rdp(RdpTab::new(
+            Uuid::new_v4(),
+            Some(id),
+            title,
+            label.clone(),
+            handle,
+        ));
+        self.push_tab(tab);
+        self.status = format!("Opened RDP {label}");
+        self.toaster.info("RDP", format!("Connecting to {label}"));
     }
 
     fn push_tab(&mut self, tab: EshTab) {
@@ -446,6 +480,14 @@ impl EshApp {
                         label: format!("SFTP: {}", conn.name),
                         detail: format!("{addr}  -  {group}"),
                         hint: "SFTP".to_string(),
+                    });
+                }
+                Protocol::Rdp => {
+                    items.push(CommandItem {
+                        command: Command::OpenConnection { id: conn.id },
+                        label: format!("RDP: {}", conn.name),
+                        detail: format!("{addr}  -  {group}"),
+                        hint: "RDP".to_string(),
                     });
                 }
                 _ => {
@@ -650,6 +692,24 @@ impl EshApp {
                             self.toaster.info("SFTP disconnected", label);
                         } else {
                             self.toaster.error(format!("{label} SFTP failed"), reason);
+                        }
+                    }
+                }
+                EshTab::Rdp(tab) => {
+                    if tab.closed_reported {
+                        continue;
+                    }
+                    if let Some(reason) = tab.closed.clone() {
+                        tab.closed_reported = true;
+                        let label = tab.connection_label.clone();
+                        let lower = reason.to_lowercase();
+                        if lower == "session closed"
+                            || lower.is_empty()
+                            || lower == "client closing"
+                        {
+                            self.toaster.info("RDP disconnected", label);
+                        } else {
+                            self.toaster.error(format!("{label} RDP failed"), reason);
                         }
                     }
                 }
