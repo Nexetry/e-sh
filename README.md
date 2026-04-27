@@ -3,7 +3,7 @@
 > A unified, cross-platform remote connection manager built in Rust with `egui`.
 
 `e-sh` (the **e** stands for **egui**) is a single-binary desktop application for
-managing and launching remote sessions over **SSH**, **SFTP**, and **RDP** from one
+managing and launching remote sessions over **SSH**, **SFTP**, **RDP**, and **VNC** from one
 consistent interface.
 
 ---
@@ -15,8 +15,9 @@ terminal, an SFTP file browser, and a remote desktop viewer. `e-sh` brings these
 workflows together into a single native application that is fast to launch, easy
 to script, and consistent across Linux, macOS, and Windows.
 
-The goal is **one binary, one UI, every protocol you need every day** — without
-sacrificing the keyboard-first, low-overhead feel that power users expect.
+The goal is **one binary, one UI, every protocol you need every day** (SSH, SFTP,
+RDP, VNC) — without sacrificing the keyboard-first, low-overhead feel that power
+users expect.
 
 ## Features
 
@@ -79,6 +80,17 @@ sacrificing the keyboard-first, low-overhead feel that power users expect.
   - Dirty-region bitmap transfer — only changed screen rectangles are sent from the helper to the UI, not the full framebuffer
   - Advanced display settings in the connection edit dialog with platform-specific FreeRDP install instructions (macOS / Linux / Windows)
 
+- **VNC** remote desktop viewer:
+  - Pure-Rust RFB (Remote Framebuffer) client — no external binaries or C libraries required
+  - Supports RFB protocol versions 3.3, 3.7, and 3.8
+  - **VNC Authentication** (DES challenge-response) and **None** security types
+  - Embedded framebuffer rendered as an egui texture with mouse, keyboard, and scroll wheel forwarding
+  - Handles Raw and CopyRect encodings
+  - Full keyboard input including typed characters (`!`, `@`, uppercase letters, etc.) via X11 keysym mapping
+  - Scroll wheel support via RFB button 4/5 emulation
+  - Periodic incremental framebuffer update requests to keep the display responsive during idle periods
+  - Clean shutdown — closing a tab or the app terminates the VNC session promptly without requiring force-quit
+
 - **Credential storage**:
   - Passwords and key passphrases are encrypted with a **master password** you set
     on first launch and stored in `secrets.enc.toml` next to your other config
@@ -115,6 +127,7 @@ sacrificing the keyboard-first, low-overhead feel that power users expect.
 | SSH      | Interactive remote shell      | **Working** (password + pubkey + agent, TOFU, tunnels `-L`/`-R`/`-D`, chained ProxyJump, scrollback + copy/paste, encrypted secret store, opt-in asciicast v2 recording) |
 | SFTP     | Secure file transfer / browse | **Working** (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns, cancel, opt-in JSONL audit recording)                  |
 | RDP      | Remote desktop viewer         | **Working** (dual-backend: built-in IronRDP for Windows/xrdp with embedded viewer, auto-fallback to FreeRDP for GNOME Remote Desktop; NLA auth, dirty-region updates)    |
+| VNC      | Remote desktop viewer         | **Working** (pure-Rust RFB client, VNC auth + None, Raw + CopyRect encodings, embedded viewer with full mouse/keyboard forwarding)                                       |
 
 ## Architecture
 
@@ -134,13 +147,15 @@ src/
 ├── proto/
 │   ├── ssh.rs              russh client, host-key verifier, PTY session
 │   ├── sftp.rs             russh-sftp client, recursive transfers, cancel registry
-│   └── rdp.rs              RDP session manager — spawns e-sh-rdp helper, binary protocol bridge
+│   ├── rdp.rs              RDP session manager — spawns e-sh-rdp helper, binary protocol bridge
+│   └── vnc.rs              Pure-Rust VNC (RFB) client — auth, framebuffer updates, input forwarding
 └── ui/
     ├── connection_tree.rs  Left-side tree + "+" button
     ├── dock.rs             egui_dock tab area + per-tab tunnels status strip
     ├── edit_dialog.rs      Add / edit connection modal (auth, jump chain, tunnels, RDP display)
     ├── host_key_prompt.rs  TOFU prompt modal
     ├── rdp_tab.rs          RDP viewer tab — framebuffer texture, mouse/keyboard/scroll forwarding
+    ├── vnc_tab.rs          VNC viewer tab — framebuffer texture, mouse/keyboard/scroll forwarding
     ├── sftp_tab.rs         Dual-pane SFTP browser (filter, sort, resize, multi-select)
     ├── status_bar.rs       Bottom status bar
     ├── toast.rs            Toast notification overlay
@@ -166,6 +181,7 @@ VS Code "Draw.io Integration" extension.
 - **SFTP:** `russh-sftp` `2.1.1`
 - **Terminal emulator:** `alacritty_terminal` `0.26`
 - **RDP:** [`IronRDP`](https://github.com/Devolutions/IronRDP) (built-in, Rust-native) + [FreeRDP](https://www.freerdp.com/) (external fallback for GFX pipeline servers)
+- **VNC:** Pure-Rust RFB client with `des` `0.8` for VNC authentication
 - **File picker:** `rfd` `0.15`
 - **Encryption:** `age` `0.11` (scrypt + ChaCha20-Poly1305) for the credential store
 - **Config:** TOML via `serde` + `toml`
@@ -337,7 +353,7 @@ Files in that directory:
 
 ## Project Status
 
-`e-sh` is in **early development (alpha)**. The SSH, SFTP, and RDP features are functional
+`e-sh` is in **early development (alpha)**. The SSH, SFTP, RDP, and VNC features are functional
 end-to-end (connect, authenticate, render shell, browse + transfer files, view remote
 desktops, persist host keys), but expect breaking changes to config formats and APIs.
 
@@ -365,6 +381,7 @@ desktops, persist host keys), but expect breaking changes to config formats and 
 - [x] Connections tab UI polish (drag-to-reorder, grey, ellipsised and small text sub title)
 - [x] Session recording / logging (opt-in)
 - [x] RDP remote desktop viewer (dual-backend: IronRDP embedded + FreeRDP external fallback)
+- [x] VNC remote desktop viewer (pure-Rust RFB client, embedded viewer)
 - [ ] Plugin / scripting hooks
 
 ## Screenshots

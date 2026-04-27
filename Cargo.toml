@@ -3,7 +3,7 @@ name = "e-sh"
 version = "1.1.0"
 edition = "2024"
 authors = ["chakyiu <lcyharry@hotmail.com>"]
-description = "A unified cross-platform remote connection manager (SSH, SFTP) built in Rust with egui."
+description = "A unified cross-platform remote connection manager (SSH, SFTP, RDP, VNC) built in Rust with egui."
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/Nexetry/e-sh"
 repository = "https://github.com/Nexetry/e-sh"
@@ -98,10 +98,11 @@ assets = [
     ],
 ]
 extended-description = """\
-e-sh is a single-binary, keyboard-first remote connection manager for SSH \
-and SFTP, with a native egui UI. It supports password / pubkey / SSH-agent \
-auth, TOFU host-key pinning, chained jump hosts, SSH tunnels (-L/-R/-D), \
-and a dual-pane SFTP browser with drag-drop transfers.\
+e-sh is a single-binary, keyboard-first remote connection manager for SSH, \
+SFTP, RDP, and VNC, with a native egui UI. It supports password / pubkey / \
+SSH-agent auth, TOFU host-key pinning, chained jump hosts, SSH tunnels \
+(-L/-R/-D), a dual-pane SFTP browser with drag-drop transfers, an RDP viewer \
+with IronRDP + FreeRDP backends, and a pure-Rust VNC viewer.\
 """
 depends = "libgtk-3-0, libxcb1, libxkbcommon0, libssl3, libdbus-1-3"
 
