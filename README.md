@@ -500,5 +500,4 @@ before sending a pull request.
 
 ## License
 
-License terms have not yet been finalized. Until a `LICENSE` file is added,
-all rights are reserved by the authors.
+This project is licensed under the [MIT License](LICENSE).

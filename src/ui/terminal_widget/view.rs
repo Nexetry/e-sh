@@ -94,12 +94,22 @@ impl<'a> TerminalView<'a> {
         }
 
         if snapshot.cursor_visible && snapshot.display_offset == 0 {
-            let (cy, cx) = snapshot.cursor;
-            let cursor_rect = Rect::from_min_size(
-                Pos2::new(origin.x + cx as f32 * cell_width, origin.y + cy as f32 * row_height),
-                Vec2::new(cell_width, row_height),
-            );
-            painter.rect_stroke(cursor_rect, 0.0, Stroke::new(1.5, Color32::from_rgb(0xea, 0xea, 0xea)), egui::StrokeKind::Inside);
+            let focused = response.has_focus();
+            let cursor_on = if focused {
+                let phase = ui.ctx().input(|i| i.time) % 1.0;
+                ui.ctx().request_repaint();
+                phase < 0.5
+            } else {
+                true
+            };
+            if cursor_on {
+                let (cy, cx) = snapshot.cursor;
+                let cursor_rect = Rect::from_min_size(
+                    Pos2::new(origin.x + cx as f32 * cell_width, origin.y + cy as f32 * row_height),
+                    Vec2::new(cell_width, row_height),
+                );
+                painter.rect_stroke(cursor_rect, 0.0, Stroke::new(1.5, Color32::from_rgb(0xea, 0xea, 0xea)), egui::StrokeKind::Inside);
+            }
         }
 
         if self.emulator.find.open && !self.emulator.find.matches.is_empty() {
