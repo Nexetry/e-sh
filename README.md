@@ -108,6 +108,13 @@ users expect.
   - Commands: _New connection_, _Open_, _Open SFTP_, _Edit_ (per saved connection), _Switch to tab_ (per open tab), _Close tab_, _Toggle sidebar_, _Lock secrets_, _Open recordings_, _Quit_
   - Global app shortcuts: **Cmd/Ctrl-B** toggle sidebar · **Cmd/Ctrl-W** close active tab · **Cmd/Ctrl-Q** quit
 
+- **Automatic update checker**:
+  - On launch, queries the GitHub Releases API for the latest version of `e-sh`
+  - Non-blocking background check — never delays startup or interferes with usage
+  - Toast notification when a newer version is detected (e.g. "v1.2.0 → v1.3.0")
+  - Persistent top-of-window banner with a one-click "Open release page" button
+  - Failures are silently logged — offline or rate-limited users are unaffected
+
 - **Session recording (opt-in, per connection)**:
   - Enable on a per-connection basis via **Advanced → Recording** in the edit dialog (SSH and SFTP only)
   - **SSH** sessions are recorded as gzipped [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/) (`<uuid>.cast.gz`) — replay with `asciinema play <(gunzip -c file.cast.gz)`
@@ -139,6 +146,7 @@ dedicated store so the UI and protocol layers never deal with secrets directly.
 ```
 src/
 ├── app.rs                  EshApp: top-level eframe::App, wires everything together
+├── updater.rs              Background update checker (GitHub Releases API, semver compare)
 ├── core/
 │   └── connection.rs       Connection / AuthMethod / RdpBackend / ConnectionStore
 ├── config/
@@ -186,6 +194,7 @@ VS Code "Draw.io Integration" extension.
 - **Encryption:** `age` `0.11` (scrypt + ChaCha20-Poly1305) for the credential store
 - **Config:** TOML via `serde` + `toml`
 - **Paths:** `directories` `6`
+- **Update checker:** `reqwest` (rustls) + `semver` + GitHub Releases API
 - **Logging:** `tracing` + `tracing-subscriber`
 
 ## Getting Started
@@ -382,11 +391,22 @@ desktops, persist host keys), but expect breaking changes to config formats and 
 - [x] Session recording / logging (opt-in)
 - [x] RDP remote desktop viewer (dual-backend: IronRDP embedded + FreeRDP external fallback)
 - [x] VNC remote desktop viewer (pure-Rust RFB client, embedded viewer)
+- [x] Automatic update checker (GitHub Releases API, non-blocking)
 - [ ] Plugin / scripting hooks
 
 ## Screenshots
 
-> _Coming soon._
+### SSH multi-session with dockable tabs
+![SSH multi-session](doc/screenshots/ssh_multi_frame.png)
+
+### SFTP dual-pane file browser
+![SFTP browser](doc/screenshots/sftp.png)
+
+### VNC remote desktop viewer
+![VNC viewer](doc/screenshots/vnc.png)
+
+### Master password prompt
+![Master password](doc/screenshots/master_password.png)
 
 ## FAQ
 

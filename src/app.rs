@@ -14,6 +14,7 @@ use e_sh::config::secrets::SecretStore;
 use e_sh::config::store::{
     ConfigPaths, forget_secrets, hydrate_after_unlock, load_connections, save_connections,
 };
+use e_sh::updater::{self, UpdateHandle, UpdateStatus};
 use e_sh::core::connection::{AuthMethod, Connection, ConnectionStore, Protocol};
 use e_sh::proto::rdp::spawn_rdp_session;
 use e_sh::proto::sftp::spawn_sftp_session;
@@ -71,11 +72,16 @@ pub struct EshApp {
     reauth_target: RevealRequest,
     /// Pending delete confirmation for a connection.
     pending_delete_confirm: Option<Uuid>,
+    /// Background update checker handle.
+    update_handle: UpdateHandle,
+    /// Cached update status for the UI banner.
+    update_banner: Option<(String, String)>,
 }
 
 impl EshApp {
     pub fn new(_cc: &CreationContext<'_>, rt: Handle) -> Self {
         let paths = Arc::new(ConfigPaths::discover().expect("config paths"));
+        let update_handle = updater::spawn_update_check(&rt);
         let mut store = load_connections(&paths).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "failed loading connections, starting empty");
             ConnectionStore::default()
@@ -123,6 +129,8 @@ impl EshApp {
             reauth_prompt: None,
             reauth_target: RevealRequest::None,
             pending_delete_confirm: None,
+            update_handle,
+            update_banner: None,
         }
     }
 
@@ -698,6 +706,56 @@ impl EshApp {
         matches!(leaf.tabs.get(active_idx), Some(EshTab::Terminal(_)))
     }
 
+    /// Check the background update watcher and fire a toast + cache the banner info.
+    fn poll_update_status(&mut self) {
+        if self.update_banner.is_some() {
+            return; // already resolved
+        }
+        if self.update_handle.rx.has_changed().unwrap_or(false) {
+            let status = self.update_handle.rx.borrow_and_update().clone();
+            match status {
+                UpdateStatus::Available { current, latest, html_url } => {
+                    self.toaster.info(
+                        "Update available",
+                        format!("v{current} → v{latest}"),
+                    );
+                    self.update_banner = Some((latest, html_url));
+                }
+                UpdateStatus::UpToDate => {
+                    tracing::info!("e-sh is up to date");
+                }
+                UpdateStatus::Failed(e) => {
+                    tracing::debug!(error = %e, "update check failed (non-fatal)");
+                }
+                UpdateStatus::Checking => {}
+            }
+        }
+    }
+
+    /// Render a small top-bar banner when an update is available.
+    fn show_update_banner(&self, ui: &mut Ui) {
+        let Some((ref latest, ref url)) = self.update_banner else {
+            return;
+        };
+        let banner_color = egui::Color32::from_rgb(0x3b, 0x8e, 0xea);
+        egui::Frame::NONE
+            .fill(banner_color.gamma_multiply(0.15))
+            .inner_margin(egui::Margin::symmetric(8, 4))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("🚀 v{latest} is available"))
+                            .color(banner_color)
+                            .strong(),
+                    );
+                    let url = url.clone();
+                    if ui.small_button("Open release page").clicked() {
+                        let _ = open::that(&url);
+                    }
+                });
+            });
+    }
+
     fn poll_session_errors(&mut self) {
         for (_, tab) in self.dock.iter_all_tabs_mut() {
             match tab {
@@ -813,6 +871,8 @@ impl App for EshApp {
         Panel::bottom("status").show_inside(ui, |ui| {
             StatusBar { message: &self.status }.show(ui);
         });
+
+        self.poll_update_status();
 
         if self.sidebar_visible {
             Panel::left("connections")
@@ -1029,6 +1089,8 @@ impl App for EshApp {
                 }
             }
         }
+
+        self.show_update_banner(ui);
 
         CentralPanel::default()
             .frame(egui::Frame::NONE)
