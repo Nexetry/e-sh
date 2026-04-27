@@ -1,6 +1,6 @@
 [package]
 name = "e-sh"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 authors = ["chakyiu <lcyharry@hotmail.com>"]
 description = "A unified cross-platform remote connection manager (SSH, SFTP) built in Rust with egui."
@@ -31,7 +31,7 @@ tokio = { version = "1", features = [
     "fs",
     "process",
 ] }
-russh = "0.60"
+russh = "0.60.1"
 russh-sftp = "2.1.1"
 alacritty_terminal = "0.26"
 serde = { version = "1", features = ["derive"] }
@@ -77,6 +77,11 @@ priority = "optional"
 assets = [
     [
         "target/release/e-sh",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "target/release/e-sh-rdp",
         "usr/bin/",
         "755",
     ],

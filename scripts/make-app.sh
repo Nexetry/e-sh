@@ -2,16 +2,18 @@
 set -euo pipefail
 
 BIN_NAME="e-sh"
+RDP_BIN_NAME="e-sh-rdp"
 APP_NAME="e-sh"
 BUNDLE_ID="com.nexetry.e-sh"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC_BIN="${1:-}"
-OUT_DIR="${2:-$ROOT/dist}"
+SRC_RDP_BIN="${2:-}"
+OUT_DIR="${3:-$ROOT/dist}"
 VERSION="$(grep -m1 '^version' "$ROOT/Cargo.toml" | cut -d '"' -f2)"
 
 if [[ -z "$SRC_BIN" || ! -f "$SRC_BIN" ]]; then
-  echo "usage: $0 <path-to-binary> [out-dir]" >&2
+  echo "usage: $0 <path-to-binary> [path-to-rdp-helper] [out-dir]" >&2
   exit 1
 fi
 
@@ -21,6 +23,12 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
 cp "$SRC_BIN" "$APP_DIR/Contents/MacOS/$BIN_NAME"
 chmod +x "$APP_DIR/Contents/MacOS/$BIN_NAME"
+
+# Include the RDP helper binary alongside the main binary
+if [[ -n "$SRC_RDP_BIN" && -f "$SRC_RDP_BIN" ]]; then
+  cp "$SRC_RDP_BIN" "$APP_DIR/Contents/MacOS/$RDP_BIN_NAME"
+  chmod +x "$APP_DIR/Contents/MacOS/$RDP_BIN_NAME"
+fi
 
 if [[ -f "$ROOT/assets/AppIcon.icns" ]]; then
   cp "$ROOT/assets/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"

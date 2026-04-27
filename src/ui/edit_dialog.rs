@@ -5,7 +5,8 @@ use egui::{
 use uuid::Uuid;
 
 use crate::core::connection::{
-    AuthMethod, Connection, ConnectionStore, Protocol, Tunnel, TunnelKind,
+    AuthMethod, Connection, ConnectionStore, FreeRdpResizeMode, Protocol, RdpBackend, Tunnel,
+    TunnelKind,
 };
 use crate::ui::password_field::MaskedBuffer;
 
@@ -47,6 +48,7 @@ enum Section {
     Tunnels,
     Session,
     Recording,
+    Display,
 }
 
 impl Section {
@@ -58,6 +60,7 @@ impl Section {
             Section::Tunnels => "Tunnels",
             Section::Session => "Session",
             Section::Recording => "Recording",
+            Section::Display => "Display",
         }
     }
 }
@@ -206,18 +209,24 @@ impl EditConnectionDialog {
                     self.sidebar_item(ui, Section::Connection);
                     self.sidebar_item(ui, Section::Authentication);
 
-                    ui.add_space(12.0);
-                    self.sidebar_group(ui, "Common");
-                    self.sidebar_item(ui, Section::JumpHost);
+                    if matches!(self.draft.protocol, Protocol::Rdp) {
+                        ui.add_space(12.0);
+                        self.sidebar_group(ui, "Advanced");
+                        self.sidebar_item(ui, Section::Display);
+                    } else {
+                        ui.add_space(12.0);
+                        self.sidebar_group(ui, "Common");
+                        self.sidebar_item(ui, Section::JumpHost);
 
-                    ui.add_space(12.0);
-                    self.sidebar_group(ui, "Advanced");
-                    self.sidebar_item(ui, Section::Tunnels);
-                    if matches!(self.draft.protocol, Protocol::Ssh) {
-                        self.sidebar_item(ui, Section::Session);
-                    }
-                    if matches!(self.draft.protocol, Protocol::Ssh | Protocol::Sftp) {
-                        self.sidebar_item(ui, Section::Recording);
+                        ui.add_space(12.0);
+                        self.sidebar_group(ui, "Advanced");
+                        self.sidebar_item(ui, Section::Tunnels);
+                        if matches!(self.draft.protocol, Protocol::Ssh) {
+                            self.sidebar_item(ui, Section::Session);
+                        }
+                        if matches!(self.draft.protocol, Protocol::Ssh | Protocol::Sftp) {
+                            self.sidebar_item(ui, Section::Recording);
+                        }
                     }
                 });
         });
@@ -270,6 +279,19 @@ impl EditConnectionDialog {
         {
             self.section = Section::Connection;
         }
+        if matches!(self.section, Section::Display)
+            && !matches!(self.draft.protocol, Protocol::Rdp)
+        {
+            self.section = Section::Connection;
+        }
+        if matches!(self.draft.protocol, Protocol::Rdp)
+            && matches!(
+                self.section,
+                Section::JumpHost | Section::Tunnels | Section::Session | Section::Recording
+            )
+        {
+            self.section = Section::Connection;
+        }
         match self.section {
             Section::Connection => self.connection_pane(ui),
             Section::Authentication => self.auth_pane(ui),
@@ -277,6 +299,7 @@ impl EditConnectionDialog {
             Section::Tunnels => self.tunnels_pane(ui),
             Section::Session => self.session_pane(ui),
             Section::Recording => self.recording_pane(ui),
+            Section::Display => self.display_pane(ui),
         }
     }
 
@@ -295,6 +318,7 @@ impl EditConnectionDialog {
             RichText::new(match self.draft.protocol {
                 Protocol::Ssh => "SSH: server output is saved as asciicast v2 (gzipped).",
                 Protocol::Sftp => "SFTP: operations are saved as JSON Lines (gzipped).",
+                Protocol::Rdp => "Recording is not available for RDP connections.",
             })
             .weak(),
         );
@@ -491,7 +515,7 @@ impl EditConnectionDialog {
                     .selected_text(self.draft.protocol.label())
                     .width(180.0)
                     .show_ui(ui, |ui| {
-                        for p in [Protocol::Ssh, Protocol::Sftp] {
+                        for p in [Protocol::Ssh, Protocol::Sftp, Protocol::Rdp] {
                             if ui
                                 .selectable_value(&mut self.draft.protocol, p, p.label())
                                 .changed()
@@ -519,6 +543,150 @@ impl EditConnectionDialog {
         });
     }
 
+    fn display_pane(&mut self, ui: &mut egui::Ui) {
+        self.pane_header(
+            ui,
+            "Display",
+            "RDP backend, resolution and scaling settings.",
+        );
+
+        form_row(ui, "RDP Backend", |ui| {
+            ComboBox::from_id_salt("rdp_backend")
+                .selected_text(self.draft.rdp_backend.label())
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    for b in RdpBackend::ALL {
+                        ui.selectable_value(&mut self.draft.rdp_backend, b, b.label());
+                    }
+                });
+        });
+
+        // Contextual description for the selected backend
+        ui.add_space(4.0);
+        match self.draft.rdp_backend {
+            RdpBackend::Auto => {
+                ui.label(
+                    RichText::new(
+                        "Connects with the built-in client first. If the server requires \
+                         the Graphics Pipeline (e.g. GNOME Remote Desktop), automatically \
+                         retries with FreeRDP. Requires FreeRDP to be installed for the \
+                         fallback to work."
+                    ).weak().italics(),
+                );
+            }
+            RdpBackend::Ironrdp => {
+                ui.label(
+                    RichText::new(
+                        "Uses the built-in IronRDP client. Works with Windows RDP and xrdp. \
+                         Does not support servers that require the Graphics Pipeline \
+                         (e.g. GNOME Remote Desktop)."
+                    ).weak().italics(),
+                );
+            }
+            RdpBackend::Freerdp => {
+                ui.label(
+                    RichText::new(
+                        "Uses an external FreeRDP client. The remote desktop is displayed \
+                         in a separate window. Supports all RDP servers including GNOME \
+                         Remote Desktop."
+                    ).weak().italics(),
+                );
+                ui.add_space(8.0);
+                ui.label(RichText::new("FreeRDP must be installed:").strong());
+                ui.add_space(4.0);
+
+                egui::Grid::new("freerdp_install_grid")
+                    .num_columns(2)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("macOS").strong().small());
+                        ui.label(RichText::new("brew install freerdp").monospace().small());
+                        ui.end_row();
+
+                        ui.label("");
+                        ui.label(
+                            RichText::new("Uses sdl-freerdp (native, no XQuartz needed)")
+                                .weak().small(),
+                        );
+                        ui.end_row();
+
+                        ui.label(RichText::new("Linux").strong().small());
+                        ui.label(
+                            RichText::new("apt install freerdp3-x11  or  dnf install freerdp")
+                                .monospace().small(),
+                        );
+                        ui.end_row();
+
+                        ui.label("");
+                        ui.label(
+                            RichText::new("Uses xfreerdp3 / xfreerdp (requires X11 or Wayland)")
+                                .weak().small(),
+                        );
+                        ui.end_row();
+
+                        ui.label(RichText::new("Windows").strong().small());
+                        ui.label(
+                            RichText::new("winget install --id FreeRDP.FreeRDP")
+                                .monospace().small(),
+                        );
+                        ui.end_row();
+
+                        ui.label("");
+                        ui.label(
+                            RichText::new("Or download from github.com/FreeRDP/FreeRDP/releases")
+                                .weak().small(),
+                        );
+                        ui.end_row();
+                    });
+            }
+        }
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        form_row(ui, "Resolution", |ui| {
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut self.draft.rdp_width)
+                        .range(640..=7680)
+                        .prefix("W: "),
+                );
+                ui.label("×");
+                ui.add(
+                    egui::DragValue::new(&mut self.draft.rdp_height)
+                        .range(480..=4320)
+                        .prefix("H: "),
+                );
+            });
+        });
+
+        // FreeRDP resize mode — only relevant when FreeRDP may be used
+        if self.draft.rdp_backend != RdpBackend::Ironrdp {
+            form_row(ui, "Resize Mode", |ui| {
+                ui.horizontal(|ui| {
+                    ComboBox::from_id_salt("freerdp_resize")
+                        .selected_text(self.draft.freerdp_resize_mode.label())
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
+                            for m in FreeRdpResizeMode::ALL {
+                                ui.selectable_value(
+                                    &mut self.draft.freerdp_resize_mode,
+                                    m,
+                                    m.label(),
+                                );
+                            }
+                        });
+                    ui.weak("ℹ").on_hover_text(
+                        "Dynamic resolution: session resizes when you resize the window.\n\
+                         Smart sizing: client-side scaling to fit the window.\n\
+                         Static: fixed resolution using the width × height above.",
+                    );
+                });
+            });
+        }
+    }
+
     fn auth_pane(&mut self, ui: &mut egui::Ui) {
         self.pane_header(
             ui,
@@ -535,9 +703,13 @@ impl EditConnectionDialog {
                 })
                 .width(220.0)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.auth_kind, AuthKind::Agent, "SSH agent");
+                    if !matches!(self.draft.protocol, Protocol::Rdp) {
+                        ui.selectable_value(&mut self.auth_kind, AuthKind::Agent, "SSH agent");
+                    }
                     ui.selectable_value(&mut self.auth_kind, AuthKind::Password, "Password");
-                    ui.selectable_value(&mut self.auth_kind, AuthKind::PublicKey, "Public key");
+                    if !matches!(self.draft.protocol, Protocol::Rdp) {
+                        ui.selectable_value(&mut self.auth_kind, AuthKind::PublicKey, "Public key");
+                    }
                 });
         });
 

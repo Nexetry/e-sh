@@ -3,9 +3,74 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+pub enum RdpBackend {
+    /// Try IronRDP first, fall back to FreeRDP if the server requires GFX.
+    Auto,
+    /// Always use the built-in IronRDP backend (Windows / xrdp).
+    Ironrdp,
+    /// Always use FreeRDP (required for gnome-remote-desktop).
+    Freerdp,
+}
+
+impl Default for RdpBackend {
+    fn default() -> Self {
+        RdpBackend::Auto
+    }
+}
+
+impl RdpBackend {
+    pub fn label(self) -> &'static str {
+        match self {
+            RdpBackend::Auto => "Auto",
+            RdpBackend::Ironrdp => "Built-in (IronRDP)",
+            RdpBackend::Freerdp => "FreeRDP (external)",
+        }
+    }
+
+    pub const ALL: [RdpBackend; 3] = [RdpBackend::Auto, RdpBackend::Ironrdp, RdpBackend::Freerdp];
+}
+
+/// How the FreeRDP external window handles resolution / scaling.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FreeRdpResizeMode {
+    /// Negotiate dynamic resolution — the session resizes when the window is
+    /// resized (requires server support).
+    DynamicResolution,
+    /// Scale the remote desktop to fit the window (client-side scaling).
+    SmartSizing,
+    /// Fixed resolution — use the width/height from the connection config.
+    Static,
+}
+
+impl Default for FreeRdpResizeMode {
+    fn default() -> Self {
+        FreeRdpResizeMode::DynamicResolution
+    }
+}
+
+impl FreeRdpResizeMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            FreeRdpResizeMode::DynamicResolution => "Dynamic resolution",
+            FreeRdpResizeMode::SmartSizing => "Smart sizing (client scale)",
+            FreeRdpResizeMode::Static => "Static resolution",
+        }
+    }
+
+    pub const ALL: [FreeRdpResizeMode; 3] = [
+        FreeRdpResizeMode::DynamicResolution,
+        FreeRdpResizeMode::SmartSizing,
+        FreeRdpResizeMode::Static,
+    ];
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum Protocol {
     Ssh,
     Sftp,
+    Rdp,
 }
 
 impl Protocol {
@@ -13,12 +78,14 @@ impl Protocol {
         match self {
             Protocol::Ssh => "SSH",
             Protocol::Sftp => "SFTP",
+            Protocol::Rdp => "RDP",
         }
     }
 
     pub fn default_port(self) -> u16 {
         match self {
             Protocol::Ssh | Protocol::Sftp => 22,
+            Protocol::Rdp => 3389,
         }
     }
 }
@@ -127,9 +194,18 @@ pub struct Connection {
     pub after_connect_script: Option<String>,
     #[serde(default)]
     pub after_close_script: Option<String>,
+    #[serde(default)]
+    pub rdp_backend: RdpBackend,
+    #[serde(default)]
+    pub freerdp_resize_mode: FreeRdpResizeMode,
+    #[serde(default = "default_rdp_width")]
+    pub rdp_width: u16,
+    #[serde(default = "default_rdp_height")]
+    pub rdp_height: u16,
 }
 
-#[derive(Deserialize)]
+fn default_rdp_width() -> u16 { 1920 }
+fn default_rdp_height() -> u16 { 1080 }#[derive(Deserialize)]
 struct ConnectionRaw {
     id: Uuid,
     name: String,
@@ -161,6 +237,14 @@ struct ConnectionRaw {
     after_connect_script: Option<String>,
     #[serde(default)]
     after_close_script: Option<String>,
+    #[serde(default)]
+    rdp_backend: RdpBackend,
+    #[serde(default)]
+    freerdp_resize_mode: FreeRdpResizeMode,
+    #[serde(default = "default_rdp_width")]
+    rdp_width: u16,
+    #[serde(default = "default_rdp_height")]
+    rdp_height: u16,
 }
 
 impl From<ConnectionRaw> for Connection {
@@ -189,6 +273,10 @@ impl From<ConnectionRaw> for Connection {
             before_script: raw.before_script,
             after_connect_script: raw.after_connect_script,
             after_close_script: raw.after_close_script,
+            rdp_backend: raw.rdp_backend,
+            freerdp_resize_mode: raw.freerdp_resize_mode,
+            rdp_width: raw.rdp_width,
+            rdp_height: raw.rdp_height,
         }
     }
 }
@@ -213,6 +301,10 @@ impl Connection {
             before_script: None,
             after_connect_script: None,
             after_close_script: None,
+            rdp_backend: RdpBackend::default(),
+            freerdp_resize_mode: FreeRdpResizeMode::default(),
+            rdp_width: default_rdp_width(),
+            rdp_height: default_rdp_height(),
         }
     }
 

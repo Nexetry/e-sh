@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use crate::proto::ssh::TunnelStatusKind;
 use crate::ui::recordings_view::{RecordingsAction, RecordingsTab, render_recordings_tab};
+use crate::ui::rdp_tab::{RdpTab, render_rdp_tab};
 use crate::ui::sftp_tab::{SftpTab, render_sftp_tab};
 use crate::ui::terminal_widget::{TerminalEmulator, TerminalView};
 
@@ -20,6 +21,7 @@ pub struct TerminalTab {
 pub enum EshTab {
     Terminal(TerminalTab),
     Sftp(SftpTab),
+    Rdp(RdpTab),
     Recordings(RecordingsTab),
 }
 
@@ -28,6 +30,7 @@ impl EshTab {
         match self {
             EshTab::Terminal(t) => t.id,
             EshTab::Sftp(t) => t.id,
+            EshTab::Rdp(t) => t.id,
             EshTab::Recordings(t) => t.id,
         }
     }
@@ -36,6 +39,7 @@ impl EshTab {
         match self {
             EshTab::Terminal(t) => &t.title,
             EshTab::Sftp(t) => &t.title,
+            EshTab::Rdp(t) => &t.title,
             EshTab::Recordings(t) => &t.title,
         }
     }
@@ -44,6 +48,7 @@ impl EshTab {
         match self {
             EshTab::Terminal(t) => t.source_connection,
             EshTab::Sftp(t) => t.source_connection,
+            EshTab::Rdp(t) => t.source_connection,
             EshTab::Recordings(_) => None,
         }
     }
@@ -52,6 +57,7 @@ impl EshTab {
         match self {
             EshTab::Terminal(t) => t.tab_color,
             EshTab::Sftp(t) => t.tab_color,
+            EshTab::Rdp(t) => t.tab_color,
             EshTab::Recordings(_) => None,
         }
     }
@@ -60,12 +66,17 @@ impl EshTab {
         match self {
             EshTab::Terminal(t) => t.tab_color = color,
             EshTab::Sftp(t) => t.tab_color = color,
+            EshTab::Rdp(t) => t.tab_color = color,
             EshTab::Recordings(_) => {}
         }
     }
 
     pub fn is_sftp(&self) -> bool {
         matches!(self, EshTab::Sftp(_))
+    }
+
+    pub fn is_rdp(&self) -> bool {
+        matches!(self, EshTab::Rdp(_))
     }
 }
 
@@ -118,6 +129,10 @@ impl TabViewer for EshTabViewer {
                 render_sftp_tab(ui, t);
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
             }
+            EshTab::Rdp(t) => {
+                render_rdp_tab(ui, t);
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+            }
             EshTab::Recordings(t) => {
                 let act = render_recordings_tab(ui, t);
                 let has = act.toast_info.is_some()
@@ -146,6 +161,7 @@ impl TabViewer for EshTabViewer {
         let tab_id = tab.id();
         let source = tab.source_connection();
         let is_sftp = tab.is_sftp();
+        let _is_rdp = tab.is_rdp();
         let current_color = tab.tab_color();
 
         let duplicate_enabled = source.is_some();

@@ -1,0 +1,34 @@
+[package]
+name = "e-sh-rdp"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "e-sh-rdp"
+path = "src/main.rs"
+
+[dependencies]
+# Pin to a master commit that includes xrdp interop fixes (PR #1130, #1131,
+# #1132, #1147, #1148) which are not yet in the published 0.14 release.
+ironrdp = { git = "https://github.com/Devolutions/IronRDP", rev = "3fe6d157e0b55bddfdac20af290a6cfa6e550576", features = [
+    "connector",
+    "session",
+    "graphics",
+    "input",
+] }
+ironrdp-tokio = { git = "https://github.com/Devolutions/IronRDP", rev = "3fe6d157e0b55bddfdac20af290a6cfa6e550576" }
+ironrdp-tls = { git = "https://github.com/Devolutions/IronRDP", rev = "3fe6d157e0b55bddfdac20af290a6cfa6e550576", features = [
+    "rustls",
+] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "io-util",
+    "net",
+    "sync",
+    "time",
+] }
+anyhow = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
