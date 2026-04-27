@@ -1070,19 +1070,17 @@ fn handle_dropped_files(ui: &mut Ui, tab: &mut SftpTab) {
 fn render_filter_row(ui: &mut Ui, buf: &mut String, id_src: impl std::hash::Hash) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("\u{1F50D}").small());
-        let resp = ui.add(
+        let avail = ui.available_width() - 24.0;
+        ui.add(
             egui::TextEdit::singleline(buf)
                 .id(egui::Id::new(id_src))
-                .desired_width(f32::INFINITY)
+                .desired_width(avail.max(40.0))
                 .hint_text("filter"),
         );
-        let _ = resp;
         if !buf.is_empty() {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("x").clicked() {
-                    buf.clear();
-                }
-            });
+            if ui.small_button("x").clicked() {
+                buf.clear();
+            }
         }
     });
 }
