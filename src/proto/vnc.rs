@@ -328,10 +328,6 @@ fn run_vnc_session(
     // Request initial full framebuffer update
     send_fb_update_request(&mut stream, false, 0, 0, fb_width, fb_height)?;
 
-    // Set a read timeout so the reader loop can periodically re-request
-    // framebuffer updates even when the server is idle.
-    stream.set_read_timeout(Some(std::time::Duration::from_millis(100)))?;
-
     // Clone stream for the writer thread
     let writer_stream = stream.try_clone()?;
     let cmd_rx = std::sync::Mutex::new(cmd_rx);
@@ -341,17 +337,28 @@ fn run_vnc_session(
     });
 
     // Reader loop
+    //
+    // We use a short read timeout ONLY for the 1-byte message-type probe.
+    // Once we know a message is arriving, we switch back to blocking mode
+    // so that `read_exact` on the payload never fails with EAGAIN mid-read.
+    let probe_timeout = Some(std::time::Duration::from_millis(100));
     let mut framebuffer = vec![0u8; fb_width as usize * fb_height as usize * 4];
     loop {
         if shutdown.load(Ordering::Relaxed) {
             break;
         }
+
+        // Probe for the next message type byte with a timeout
+        stream.set_read_timeout(probe_timeout).ok();
         let mut msg_type = [0u8; 1];
-        match stream.read_exact(&mut msg_type) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+        match stream.read(&mut msg_type) {
+            Ok(0) => {
                 let _ = event_tx.send(VncEvent::Closed(Some("server closed connection".into())));
                 break;
+            }
+            Ok(_) => {
+                // Got data — switch to blocking for the rest of this message
+                stream.set_read_timeout(None).ok();
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
                    || e.kind() == std::io::ErrorKind::TimedOut => {
@@ -359,8 +366,14 @@ fn run_vnc_session(
                 if shutdown.load(Ordering::Relaxed) {
                     break;
                 }
+                // Switch to blocking briefly to send the request
+                stream.set_read_timeout(None).ok();
                 let _ = send_fb_update_request(&mut stream, true, 0, 0, fb_width, fb_height);
                 continue;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                let _ = event_tx.send(VncEvent::Closed(Some("server closed connection".into())));
+                break;
             }
             Err(e) => {
                 let _ = event_tx.send(VncEvent::Closed(Some(format!("read error: {e}"))));
