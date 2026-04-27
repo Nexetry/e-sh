@@ -18,6 +18,7 @@ use e_sh::core::connection::{AuthMethod, Connection, ConnectionStore, Protocol};
 use e_sh::proto::rdp::spawn_rdp_session;
 use e_sh::proto::sftp::spawn_sftp_session;
 use e_sh::proto::ssh::{HostKeyContext, spawn_session};
+use e_sh::proto::vnc::spawn_vnc_session;
 use e_sh::recording::{self, Kind as RecordingKind, StartParams};
 use e_sh::ui::command_palette::{Command, CommandItem, CommandPalette, PaletteResult};
 use e_sh::ui::connection_tree::{ConnectionTree, ReorderRequest};
@@ -34,6 +35,7 @@ use e_sh::ui::sftp_tab::SftpTab;
 use e_sh::ui::status_bar::StatusBar;
 use e_sh::ui::terminal_widget::TerminalEmulator;
 use e_sh::ui::toast::Toaster;
+use e_sh::ui::vnc_tab::VncTab;
 
 enum PendingAction {
     Open(Uuid),
@@ -201,6 +203,10 @@ impl EshApp {
             self.launch_rdp(id);
             return;
         }
+        if matches!(conn.protocol, Protocol::Vnc) {
+            self.launch_vnc(id);
+            return;
+        }
         let chain = match self.store.resolve_jump_chain(id) {
             Ok(c) => c,
             Err(e) => {
@@ -354,6 +360,34 @@ impl EshApp {
         self.toaster.info("RDP", format!("Connecting to {label}"));
     }
 
+    fn launch_vnc(&mut self, id: Uuid) {
+        let Some(conn) = self.store.find(id).cloned() else {
+            return;
+        };
+        if connection_needs_secret(&conn) && self.secrets.is_none() {
+            self.pending.push_back(PendingAction::Open(id));
+            self.ensure_secrets_unlocked(if SecretStore::file_exists(&self.paths.config_dir) {
+                MasterPasswordMode::Unlock
+            } else {
+                MasterPasswordMode::Create
+            });
+            return;
+        }
+        let label = format!("{}@{}:{}", conn.username, conn.host, conn.port);
+        let title = format!("{} (VNC)", conn.name);
+        let handle = spawn_vnc_session(&self.rt, conn);
+        let tab = EshTab::Vnc(VncTab::new(
+            Uuid::new_v4(),
+            Some(id),
+            title,
+            label.clone(),
+            handle,
+        ));
+        self.push_tab(tab);
+        self.status = format!("Opened VNC {label}");
+        self.toaster.info("VNC", format!("Connecting to {label}"));
+    }
+
     fn push_tab(&mut self, tab: EshTab) {
         if self.dock.main_surface_mut().is_empty() {
             self.dock = DockState::new(vec![tab]);
@@ -488,6 +522,14 @@ impl EshApp {
                         label: format!("RDP: {}", conn.name),
                         detail: format!("{addr}  -  {group}"),
                         hint: "RDP".to_string(),
+                    });
+                }
+                Protocol::Vnc => {
+                    items.push(CommandItem {
+                        command: Command::OpenConnection { id: conn.id },
+                        label: format!("VNC: {}", conn.name),
+                        detail: format!("{addr}  -  {group}"),
+                        hint: "VNC".to_string(),
                     });
                 }
                 _ => {
@@ -710,6 +752,24 @@ impl EshApp {
                             self.toaster.info("RDP disconnected", label);
                         } else {
                             self.toaster.error(format!("{label} RDP failed"), reason);
+                        }
+                    }
+                }
+                EshTab::Vnc(tab) => {
+                    if tab.closed_reported {
+                        continue;
+                    }
+                    if let Some(reason) = tab.closed.clone() {
+                        tab.closed_reported = true;
+                        let label = tab.connection_label.clone();
+                        let lower = reason.to_lowercase();
+                        if lower == "session closed"
+                            || lower.is_empty()
+                            || lower == "client closing"
+                        {
+                            self.toaster.info("VNC disconnected", label);
+                        } else {
+                            self.toaster.error(format!("{label} VNC failed"), reason);
                         }
                     }
                 }

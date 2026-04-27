@@ -71,6 +71,7 @@ pub enum Protocol {
     Ssh,
     Sftp,
     Rdp,
+    Vnc,
 }
 
 impl Protocol {
@@ -79,6 +80,7 @@ impl Protocol {
             Protocol::Ssh => "SSH",
             Protocol::Sftp => "SFTP",
             Protocol::Rdp => "RDP",
+            Protocol::Vnc => "VNC",
         }
     }
 
@@ -86,6 +88,7 @@ impl Protocol {
         match self {
             Protocol::Ssh | Protocol::Sftp => 22,
             Protocol::Rdp => 3389,
+            Protocol::Vnc => 5900,
         }
     }
 }

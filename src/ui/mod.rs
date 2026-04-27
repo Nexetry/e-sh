@@ -11,3 +11,4 @@ pub mod sftp_tab;
 pub mod status_bar;
 pub mod terminal_widget;
 pub mod toast;
+pub mod vnc_tab;
