@@ -3,7 +3,7 @@
 > A unified, cross-platform remote connection manager built in Rust with `egui`.
 
 `e-sh` (the **e** stands for **egui**) is a single-binary desktop application for
-managing and launching remote sessions over **SSH** and **SFTP** from one
+managing and launching remote sessions over **SSH**, **SFTP**, and **RDP** from one
 consistent interface.
 
 ---
@@ -11,11 +11,11 @@ consistent interface.
 ## Overview
 
 Managing remote machines often requires juggling several different clients: an SSH
-terminal and an SFTP file browser. `e-sh` brings these workflows together into a
-single native application that is fast to launch, easy to script, and consistent
-across Linux, macOS, and Windows.
+terminal, an SFTP file browser, and a remote desktop viewer. `e-sh` brings these
+workflows together into a single native application that is fast to launch, easy
+to script, and consistent across Linux, macOS, and Windows.
 
-The goal is **one binary, one UI, both protocols you need every day** — without
+The goal is **one binary, one UI, every protocol you need every day** — without
 sacrificing the keyboard-first, low-overhead feel that power users expect.
 
 ## Features
@@ -68,6 +68,17 @@ sacrificing the keyboard-first, low-overhead feel that power users expect.
   - **Resizable columns** (Name / Size / Modified) and **click-to-sort** column headers (toggle ▲ / ▼); directories grouped first regardless of sort key
   - Folder / file / symlink icons; size auto-formatted (B / K / M / G / T)
 
+- **RDP** remote desktop viewer:
+  - Dual-backend architecture via the `e-sh-rdp` helper binary:
+    - **IronRDP** (built-in, Rust-native) — embedded framebuffer rendered as an egui texture with mouse, keyboard, and scroll wheel forwarding; works with Windows RDP and xrdp
+    - **FreeRDP** (external) — spawns `sdl-freerdp` / `xfreerdp` as a separate window; required for servers that mandate the Graphics Pipeline (e.g. GNOME Remote Desktop / grd)
+  - **Auto** backend mode (default): tries IronRDP first, detects GFX-only disconnects, and automatically retries with FreeRDP — no manual configuration needed for most servers
+  - Per-connection configurable: backend selection (Auto / IronRDP / FreeRDP), resolution (custom width × height), and FreeRDP resize mode (dynamic resolution / smart sizing / static)
+  - NLA (CredSSP/NTLM) authentication, TLS, and automatic certificate acceptance
+  - xrdp compatibility: handles the stray `ServerDeactivateAll` PDU that xrdp sends before `ServerDemandActive`
+  - Dirty-region bitmap transfer — only changed screen rectangles are sent from the helper to the UI, not the full framebuffer
+  - Advanced display settings in the connection edit dialog with platform-specific FreeRDP install instructions (macOS / Linux / Windows)
+
 - **Credential storage**:
   - Passwords and key passphrases are encrypted with a **master password** you set
     on first launch and stored in `secrets.enc.toml` next to your other config
@@ -103,6 +114,7 @@ sacrificing the keyboard-first, low-overhead feel that power users expect.
 | -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | SSH      | Interactive remote shell      | **Working** (password + pubkey + agent, TOFU, tunnels `-L`/`-R`/`-D`, chained ProxyJump, scrollback + copy/paste, encrypted secret store, opt-in asciicast v2 recording) |
 | SFTP     | Secure file transfer / browse | **Working** (dual-pane browser, drag-drop, recursive transfers, multi-select, filter, sortable/resizable columns, cancel, opt-in JSONL audit recording)                  |
+| RDP      | Remote desktop viewer         | **Working** (dual-backend: built-in IronRDP for Windows/xrdp with embedded viewer, auto-fallback to FreeRDP for GNOME Remote Desktop; NLA auth, dirty-region updates)    |
 
 ## Architecture
 
@@ -115,22 +127,27 @@ dedicated store so the UI and protocol layers never deal with secrets directly.
 src/
 ├── app.rs                  EshApp: top-level eframe::App, wires everything together
 ├── core/
-│   └── connection.rs       Connection / AuthMethod / ConnectionStore
+│   └── connection.rs       Connection / AuthMethod / RdpBackend / ConnectionStore
 ├── config/
 │   ├── store.rs            ConfigPaths + connections.toml load/save
 │   └── host_keys.rs        TOFU HostKeyStore (host_keys.toml)
 ├── proto/
 │   ├── ssh.rs              russh client, host-key verifier, PTY session
-│   └── sftp.rs             russh-sftp client, recursive transfers, cancel registry
+│   ├── sftp.rs             russh-sftp client, recursive transfers, cancel registry
+│   └── rdp.rs              RDP session manager — spawns e-sh-rdp helper, binary protocol bridge
 └── ui/
     ├── connection_tree.rs  Left-side tree + "+" button
     ├── dock.rs             egui_dock tab area + per-tab tunnels status strip
-    ├── edit_dialog.rs      Add / edit connection modal (auth, jump chain, tunnels)
+    ├── edit_dialog.rs      Add / edit connection modal (auth, jump chain, tunnels, RDP display)
     ├── host_key_prompt.rs  TOFU prompt modal
+    ├── rdp_tab.rs          RDP viewer tab — framebuffer texture, mouse/keyboard/scroll forwarding
     ├── sftp_tab.rs         Dual-pane SFTP browser (filter, sort, resize, multi-select)
     ├── status_bar.rs       Bottom status bar
     ├── toast.rs            Toast notification overlay
     └── terminal_widget/    alacritty_terminal renderer
+
+e-sh-rdp/                   Standalone helper binary (separate crate)
+└── src/main.rs             IronRDP session + FreeRDP fallback, binary protocol over stdin/stdout
 ```
 
 The high-level system diagram lives at:
@@ -148,6 +165,7 @@ VS Code "Draw.io Integration" extension.
 - **SSH:** `russh` `0.55`
 - **SFTP:** `russh-sftp` `2.1.1`
 - **Terminal emulator:** `alacritty_terminal` `0.26`
+- **RDP:** [`IronRDP`](https://github.com/Devolutions/IronRDP) (built-in, Rust-native) + [FreeRDP](https://www.freerdp.com/) (external fallback for GFX pipeline servers)
 - **File picker:** `rfd` `0.15`
 - **Encryption:** `age` `0.11` (scrypt + ChaCha20-Poly1305) for the credential store
 - **Config:** TOML via `serde` + `toml`
@@ -169,6 +187,8 @@ VS Code "Draw.io Integration" extension.
 git clone https://github.com/nexetry/e-sh.git
 cd e-sh
 cargo build --release
+# Build the RDP helper (separate crate)
+cargo build --release --manifest-path e-sh-rdp/Cargo.toml
 ```
 
 ### Run
@@ -177,7 +197,9 @@ cargo build --release
 cargo run --release
 ```
 
-The compiled binary will be available at `target/release/e-sh`.
+The compiled binaries will be at `target/release/e-sh` and
+`e-sh-rdp/target/release/e-sh-rdp`. The main binary locates the helper
+automatically when both are in the same directory.
 
 ### Release builds
 
@@ -315,9 +337,9 @@ Files in that directory:
 
 ## Project Status
 
-`e-sh` is in **early development (alpha)**. The SSH and SFTP MVPs are functional
-end-to-end (connect, authenticate, render shell, browse + transfer files,
-persist host keys), but expect breaking changes to config formats and APIs.
+`e-sh` is in **early development (alpha)**. The SSH, SFTP, and RDP features are functional
+end-to-end (connect, authenticate, render shell, browse + transfer files, view remote
+desktops, persist host keys), but expect breaking changes to config formats and APIs.
 
 ## Roadmap
 
@@ -342,6 +364,7 @@ persist host keys), but expect breaking changes to config formats and APIs.
 - [x] Tabbed multi-session UI polish (split panes, drag-to-reorder)
 - [x] Connections tab UI polish (drag-to-reorder, grey, ellipsised and small text sub title)
 - [x] Session recording / logging (opt-in)
+- [x] RDP remote desktop viewer (dual-backend: IronRDP embedded + FreeRDP external fallback)
 - [ ] Plugin / scripting hooks
 
 ## Screenshots
@@ -362,6 +385,17 @@ the same on every OS — which matches the "single binary" goal.
 **Q: Does it support agent forwarding / jump hosts / X11 forwarding?**
 Chained jump hosts (ProxyJump) are supported today with up to 8 hops per
 connection. SSH agent forwarding and X11 forwarding are not yet implemented.
+
+**Q: How does the RDP dual-backend work?**
+`e-sh` ships a helper binary (`e-sh-rdp`) that handles the RDP protocol. In
+**Auto** mode (the default) it first tries the built-in IronRDP client, which
+renders the remote desktop directly inside the egui tab. If the server requires
+the Graphics Pipeline extension (e.g. GNOME Remote Desktop), IronRDP cannot
+connect — the helper detects this and automatically retries with FreeRDP, which
+opens a separate native window. You can also force a specific backend per
+connection in **Advanced → Display**. FreeRDP must be installed separately:
+`brew install freerdp` (macOS), `apt install freerdp3-x11` (Linux), or
+`winget install --id FreeRDP.FreeRDP` (Windows).
 
 **Q: Is it production ready?**
 No. See [Project Status](#project-status).
