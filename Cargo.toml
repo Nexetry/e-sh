@@ -1,6 +1,6 @@
 [package]
 name = "e-sh"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2024"
 authors = ["chakyiu <lcyharry@hotmail.com>"]
 description = "A unified cross-platform remote connection manager (SSH, SFTP, RDP, VNC) built in Rust with egui."
@@ -58,11 +58,13 @@ chrono = { version = "0.4", default-features = false, features = [
 ] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls",
+    "rustls-tls-native-roots",
     "json",
 ] }
 semver = "1"
 open = "5"
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3"

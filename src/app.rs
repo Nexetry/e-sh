@@ -74,8 +74,12 @@ pub struct EshApp {
     pending_delete_confirm: Option<Uuid>,
     /// Background update checker handle.
     update_handle: UpdateHandle,
-    /// Cached update status for the UI banner.
-    update_banner: Option<(String, String)>,
+    /// Cached update status for the UI banner: (latest_version, html_url, asset_url).
+    update_banner: Option<(String, String, Option<String>)>,
+    /// Whether the update check has been resolved (any terminal state).
+    update_resolved: bool,
+    /// In-progress self-update.
+    apply_handle: Option<updater::ApplyHandle>,
 }
 
 impl EshApp {
@@ -131,6 +135,8 @@ impl EshApp {
             pending_delete_confirm: None,
             update_handle,
             update_banner: None,
+            update_resolved: false,
+            apply_handle: None,
         }
     }
 
@@ -706,26 +712,38 @@ impl EshApp {
         matches!(leaf.tabs.get(active_idx), Some(EshTab::Terminal(_)))
     }
 
+    /// Kick off a fresh update check (e.g. when the user clicks the version label).
+    fn trigger_update_check(&mut self) {
+        self.update_resolved = false;
+        self.update_banner = None;
+        self.status = "Checking for updates…".to_string();
+        self.update_handle = updater::spawn_update_check(&self.rt);
+    }
+
     /// Check the background update watcher and fire a toast + cache the banner info.
     fn poll_update_status(&mut self) {
-        if self.update_banner.is_some() {
-            return; // already resolved
+        if self.update_resolved {
+            return;
         }
         if self.update_handle.rx.has_changed().unwrap_or(false) {
             let status = self.update_handle.rx.borrow_and_update().clone();
             match status {
-                UpdateStatus::Available { current, latest, html_url } => {
+                UpdateStatus::Available { current, latest, html_url, asset_url } => {
                     self.toaster.info(
                         "Update available",
                         format!("v{current} → v{latest}"),
                     );
-                    self.update_banner = Some((latest, html_url));
+                    self.update_banner = Some((latest, html_url, asset_url));
+                    self.update_resolved = true;
                 }
                 UpdateStatus::UpToDate => {
-                    tracing::info!("e-sh is up to date");
+                    self.status = format!("e-sh v{} is up to date", env!("CARGO_PKG_VERSION"));
+                    self.update_resolved = true;
                 }
                 UpdateStatus::Failed(e) => {
-                    tracing::debug!(error = %e, "update check failed (non-fatal)");
+                    tracing::warn!(error = %e, "update check failed");
+                    self.status = format!("Update check failed: {e}");
+                    self.update_resolved = true;
                 }
                 UpdateStatus::Checking => {}
             }
@@ -733,11 +751,48 @@ impl EshApp {
     }
 
     /// Render a small top-bar banner when an update is available.
-    fn show_update_banner(&self, ui: &mut Ui) {
-        let Some((ref latest, ref url)) = self.update_banner else {
+    fn show_update_banner(&mut self, ui: &mut Ui) {
+        // Poll apply progress if an update is in flight.
+        if let Some(handle) = &mut self.apply_handle {
+            if handle.rx.has_changed().unwrap_or(false) {
+                let status = handle.rx.borrow_and_update().clone();
+                match status {
+                    updater::ApplyStatus::Downloading => {
+                        self.status = "Downloading update…".to_string();
+                    }
+                    updater::ApplyStatus::Installing => {
+                        self.status = "Installing update…".to_string();
+                    }
+                    updater::ApplyStatus::Done { restart_path } => {
+                        self.status = "Update installed — restart to apply".to_string();
+                        self.toaster.success(
+                            "Update installed",
+                            "Restart e-sh to use the new version.",
+                        );
+                        self.apply_handle = None;
+                        // Attempt to relaunch.
+                        let _ = std::process::Command::new(&restart_path).spawn();
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        return;
+                    }
+                    updater::ApplyStatus::Failed(e) => {
+                        self.status = format!("Update failed: {e}");
+                        self.toaster.error("Update failed", &e);
+                        self.apply_handle = None;
+                    }
+                }
+            }
+        }
+
+        let Some((ref latest, ref url, ref asset_url)) = self.update_banner else {
             return;
         };
         let banner_color = egui::Color32::from_rgb(0x3b, 0x8e, 0xea);
+        let applying = self.apply_handle.is_some();
+        let has_asset = asset_url.is_some();
+        let url = url.clone();
+        let asset_url = asset_url.clone();
+
         egui::Frame::NONE
             .fill(banner_color.gamma_multiply(0.15))
             .inner_margin(egui::Margin::symmetric(8, 4))
@@ -748,8 +803,20 @@ impl EshApp {
                             .color(banner_color)
                             .strong(),
                     );
-                    let url = url.clone();
-                    if ui.small_button("Open release page").clicked() {
+                    if has_asset && !applying {
+                        if ui.small_button("Update now").clicked() {
+                            if let Some(url) = asset_url {
+                                self.apply_handle =
+                                    Some(updater::spawn_apply_update(&self.rt, url));
+                                self.status = "Downloading update…".to_string();
+                            }
+                        }
+                    }
+                    if applying {
+                        ui.spinner();
+                        ui.small("Updating…");
+                    }
+                    if ui.small_button("Release notes").clicked() {
                         let _ = open::that(&url);
                     }
                 });
@@ -869,7 +936,10 @@ impl App for EshApp {
         }
 
         Panel::bottom("status").show_inside(ui, |ui| {
-            StatusBar { message: &self.status }.show(ui);
+            let resp = StatusBar { message: &self.status }.show(ui);
+            if resp.version_clicked {
+                self.trigger_update_check();
+            }
         });
 
         self.poll_update_status();
