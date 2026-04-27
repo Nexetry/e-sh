@@ -252,6 +252,16 @@ impl SecretStore {
             .with_context(|| format!("writing {}", self.path.display()))?;
         Ok(())
     }
+
+    /// Verify a password against the stored wrapped master key.
+    /// Returns `true` if the password successfully unwraps the key.
+    pub fn verify_password(&self, password: &str) -> bool {
+        let Ok(wrapped) = B64.decode(self.wrapped_master_key.as_bytes()) else {
+            return false;
+        };
+        let secret = SecretString::from(password.to_string());
+        unwrap_master_key(&wrapped, secret).is_ok()
+    }
 }
 
 fn wrap_master_key(identity: &age::x25519::Identity, passphrase: SecretString) -> Result<String> {

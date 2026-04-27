@@ -18,6 +18,18 @@ pub struct EditConnectionDialog {
     key_passphrase: String,
     remote_commands_buf: String,
     section: Section,
+    pub reveal_password: bool,
+    pub reveal_passphrase: bool,
+    pub reveal_requested: RevealRequest,
+}
+
+/// Which secret field the user wants to reveal.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum RevealRequest {
+    #[default]
+    None,
+    Password,
+    Passphrase,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -54,6 +66,7 @@ impl Section {
 pub struct DialogResult {
     pub saved: bool,
     pub cancelled: bool,
+    pub reveal_requested: RevealRequest,
 }
 
 impl EditConnectionDialog {
@@ -82,6 +95,9 @@ impl EditConnectionDialog {
             key_path,
             key_passphrase,
             section: Section::Connection,
+            reveal_password: false,
+            reveal_passphrase: false,
+            reveal_requested: RevealRequest::None,
         }
     }
 
@@ -112,6 +128,8 @@ impl EditConnectionDialog {
         if !self.open && !result.saved {
             result.cancelled = true;
         }
+        result.reveal_requested = self.reveal_requested;
+        self.reveal_requested = RevealRequest::None;
         result
     }
 
@@ -537,11 +555,28 @@ impl EditConnectionDialog {
             }
             AuthKind::Password => {
                 form_row(ui, "Password", |ui| {
-                    let mut buf = MaskedBuffer::new(&mut self.password);
-                    ui.add(
-                        TextEdit::singleline(&mut buf)
-                            .desired_width(360.0),
-                    );
+                    ui.horizontal(|ui| {
+                        if self.reveal_password {
+                            ui.add(
+                                TextEdit::singleline(&mut self.password)
+                                    .desired_width(310.0),
+                            );
+                            if ui.button("\u{1F512}").on_hover_text("Hide password").clicked() {
+                                self.reveal_password = false;
+                            }
+                        } else {
+                            let mut buf = MaskedBuffer::new(&mut self.password);
+                            ui.add(
+                                TextEdit::singleline(&mut buf)
+                                    .desired_width(310.0),
+                            );
+                            if !self.password.is_empty()
+                                && ui.button("\u{1F441}").on_hover_text("Reveal password").clicked()
+                            {
+                                self.reveal_requested = RevealRequest::Password;
+                            }
+                        }
+                    });
                 });
                 ui.add_space(4.0);
                 ui.label(
@@ -576,12 +611,30 @@ impl EditConnectionDialog {
                     });
                 });
                 form_row(ui, "Passphrase", |ui| {
-                    let mut buf = MaskedBuffer::new(&mut self.key_passphrase);
-                    ui.add(
-                        TextEdit::singleline(&mut buf)
-                            .desired_width(360.0)
-                            .hint_text("Leave empty if key is unencrypted"),
-                    );
+                    ui.horizontal(|ui| {
+                        if self.reveal_passphrase {
+                            ui.add(
+                                TextEdit::singleline(&mut self.key_passphrase)
+                                    .desired_width(310.0)
+                                    .hint_text("Leave empty if key is unencrypted"),
+                            );
+                            if ui.button("\u{1F512}").on_hover_text("Hide passphrase").clicked() {
+                                self.reveal_passphrase = false;
+                            }
+                        } else {
+                            let mut buf = MaskedBuffer::new(&mut self.key_passphrase);
+                            ui.add(
+                                TextEdit::singleline(&mut buf)
+                                    .desired_width(310.0)
+                                    .hint_text("Leave empty if key is unencrypted"),
+                            );
+                            if !self.key_passphrase.is_empty()
+                                && ui.button("\u{1F441}").on_hover_text("Reveal passphrase").clicked()
+                            {
+                                self.reveal_requested = RevealRequest::Passphrase;
+                            }
+                        }
+                    });
                 });
             }
         }

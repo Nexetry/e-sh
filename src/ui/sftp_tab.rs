@@ -60,6 +60,11 @@ pub struct SftpTab {
     pub remote_filter: String,
     pub local_sort: (SortKey, SortDir),
     pub remote_sort: (SortKey, SortDir),
+
+    /// Pending local delete confirmation: list of paths to delete.
+    pub pending_local_delete: Option<Vec<PathBuf>>,
+    /// Pending remote delete confirmation: list of (name, is_dir) to delete.
+    pub pending_remote_delete: Option<Vec<(String, bool)>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -124,6 +129,8 @@ impl SftpTab {
             remote_filter: String::new(),
             local_sort: (SortKey::Name, SortDir::Asc),
             remote_sort: (SortKey::Name, SortDir::Asc),
+            pending_local_delete: None,
+            pending_remote_delete: None,
         }
     }
 
@@ -237,6 +244,127 @@ pub fn render_sftp_tab(ui: &mut Ui, tab: &mut SftpTab) {
         .show_inside(ui, |ui| {
             ui.push_id(("sftp_remote_pane", tab.id), |ui| render_remote_pane(ui, tab));
         });
+
+    render_delete_confirm_dialogs(ui, tab);
+}
+
+fn render_delete_confirm_dialogs(ui: &mut Ui, tab: &mut SftpTab) {
+    // Local delete confirmation
+    if let Some(items) = tab.pending_local_delete.clone() {
+        let n = items.len();
+        let label = if n == 1 {
+            items[0]
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| items[0].display().to_string())
+        } else {
+            format!("{n} items")
+        };
+        let mut confirmed = false;
+        let mut dismissed = false;
+        egui::Window::new("Confirm Delete (Local)")
+            .id(egui::Id::new(("sftp_del_local_confirm", tab.id)))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                ui.label(format!("Are you sure you want to delete \"{label}\"?"));
+                ui.label(
+                    RichText::new("This action cannot be undone.")
+                        .small()
+                        .weak(),
+                );
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Delete").clicked() {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        dismissed = true;
+                    }
+                });
+            });
+        if confirmed {
+            let mut ok = 0usize;
+            let mut errs: Vec<String> = Vec::new();
+            for p in &items {
+                let is_dir = p.is_dir();
+                let res = if is_dir {
+                    std::fs::remove_dir_all(p)
+                } else {
+                    std::fs::remove_file(p)
+                };
+                match res {
+                    Ok(_) => ok += 1,
+                    Err(e) => errs.push(format!("{}: {e}", p.display())),
+                }
+            }
+            if errs.is_empty() {
+                tab.last_message = Some(format!("rm {ok} items"));
+            } else {
+                tab.last_message = Some(format!(
+                    "rm {ok} ok, {} errors: {}",
+                    errs.len(),
+                    errs.join("; ")
+                ));
+            }
+            tab.local_selected.clear();
+            tab.local_anchor = None;
+            tab.pending_local_delete = None;
+        } else if dismissed {
+            tab.pending_local_delete = None;
+        }
+    }
+
+    // Remote delete confirmation
+    if let Some(items) = tab.pending_remote_delete.clone() {
+        let n = items.len();
+        let label = if n == 1 {
+            items[0].0.clone()
+        } else {
+            format!("{n} items")
+        };
+        let mut confirmed = false;
+        let mut dismissed = false;
+        egui::Window::new("Confirm Delete (Remote)")
+            .id(egui::Id::new(("sftp_del_remote_confirm", tab.id)))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                ui.label(format!("Are you sure you want to delete \"{label}\"?"));
+                ui.label(
+                    RichText::new("This action cannot be undone.")
+                        .small()
+                        .weak(),
+                );
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Delete").clicked() {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        dismissed = true;
+                    }
+                });
+            });
+        if confirmed {
+            for (name, is_dir) in &items {
+                let path = join_remote(&tab.remote_cwd, name);
+                let cmd = if *is_dir {
+                    SftpCommand::Rmdir { path }
+                } else {
+                    SftpCommand::Remove { path }
+                };
+                let _ = tab.handle.commands.send(cmd);
+            }
+            tab.remote_selected.clear();
+            tab.remote_anchor = None;
+            tab.pending_remote_delete = None;
+        } else if dismissed {
+            tab.pending_remote_delete = None;
+        }
+    }
 }
 
 fn render_local_pane(ui: &mut Ui, tab: &mut SftpTab) {
@@ -249,6 +377,7 @@ fn render_local_pane(ui: &mut Ui, tab: &mut SftpTab) {
     let entries = sorted_filtered_local(&list_local(&tab.local_cwd), &tab.local_filter, tab.local_sort);
     let scroll_resp = ScrollArea::vertical()
         .auto_shrink([false, false])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
         .show(ui, |ui| {
             let mut clicked_header: Option<SortKey> = None;
             ui.push_id(("sftp_local_table", tab.id), |ui| {
@@ -426,27 +555,7 @@ fn local_entry_context_menu(resp: &egui::Response, tab: &mut SftpTab, entry: &Lo
         });
         let del_label = if n > 1 { format!("Delete {n} items") } else { "Delete".to_string() };
         if ui.button(del_label).clicked() {
-            let mut ok = 0usize;
-            let mut errs: Vec<String> = Vec::new();
-            for p in &selection {
-                let is_dir = p.is_dir();
-                let res = if is_dir {
-                    std::fs::remove_dir_all(p)
-                } else {
-                    std::fs::remove_file(p)
-                };
-                match res {
-                    Ok(_) => ok += 1,
-                    Err(e) => errs.push(format!("{}: {e}", p.display())),
-                }
-            }
-            if errs.is_empty() {
-                tab.last_message = Some(format!("rm {ok} items"));
-            } else {
-                tab.last_message = Some(format!("rm {ok} ok, {} errors: {}", errs.len(), errs.join("; ")));
-            }
-            tab.local_selected.clear();
-            tab.local_anchor = None;
+            tab.pending_local_delete = Some(selection);
             ui.close();
         }
     });
@@ -467,6 +576,7 @@ fn render_remote_pane(ui: &mut Ui, tab: &mut SftpTab) {
     let entries = sorted_filtered_remote(&tab.remote_entries, &tab.remote_filter, tab.remote_sort);
     let scroll_resp = ScrollArea::vertical()
         .auto_shrink([false, false])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
         .show(ui, |ui| {
             let mut clicked_header: Option<SortKey> = None;
             ui.push_id(("sftp_remote_table", tab.id), |ui| {
@@ -633,22 +743,18 @@ fn remote_entry_context_menu(resp: &egui::Response, tab: &mut SftpTab, entry: &S
         });
         let del_label = if n > 1 { format!("Delete {n} items") } else { "Delete".to_string() };
         if ui.button(del_label).clicked() {
-            for name in &selection {
-                let path = join_remote(&tab.remote_cwd, name);
-                let is_dir = entries_snapshot
-                    .iter()
-                    .find(|e| e.name == *name)
-                    .map(|e| e.is_dir)
-                    .unwrap_or(false);
-                let cmd = if is_dir {
-                    SftpCommand::Rmdir { path }
-                } else {
-                    SftpCommand::Remove { path }
-                };
-                let _ = tab.handle.commands.send(cmd);
-            }
-            tab.remote_selected.clear();
-            tab.remote_anchor = None;
+            let items: Vec<(String, bool)> = selection
+                .iter()
+                .map(|name| {
+                    let is_dir = entries_snapshot
+                        .iter()
+                        .find(|e| e.name == *name)
+                        .map(|e| e.is_dir)
+                        .unwrap_or(false);
+                    (name.clone(), is_dir)
+                })
+                .collect();
+            tab.pending_remote_delete = Some(items);
             ui.close();
         }
     });
@@ -984,8 +1090,8 @@ fn render_filter_row(ui: &mut Ui, buf: &mut String, id_src: impl std::hash::Hash
 fn sort_header(ui: &mut Ui, label: &str, key: SortKey, current: (SortKey, SortDir)) -> egui::Response {
     let arrow = if current.0 == key {
         match current.1 {
-            SortDir::Asc => " \u{25B2}",
-            SortDir::Desc => " \u{25BC}",
+            SortDir::Asc => " ^",
+            SortDir::Desc => " v",
         }
     } else {
         ""

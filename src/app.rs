@@ -22,6 +22,7 @@ use e_sh::ui::command_palette::{Command, CommandItem, CommandPalette, PaletteRes
 use e_sh::ui::connection_tree::{ConnectionTree, ReorderRequest};
 use e_sh::ui::dock::{EshTab, EshTabViewer, TabAction, TerminalTab};
 use e_sh::ui::edit_dialog::EditConnectionDialog;
+use e_sh::ui::edit_dialog::RevealRequest;
 use e_sh::ui::host_key_prompt::{HostKeyPromptResult, HostKeyPromptUi};
 use e_sh::ui::master_password_prompt::{
     MasterPasswordMode, MasterPasswordPromptUi, MasterPasswordResult,
@@ -58,6 +59,14 @@ pub struct EshApp {
     palette: CommandPalette,
     sidebar_visible: bool,
     quit_requested: bool,
+    /// Timestamp of last successful master password verification for reveal.
+    last_master_verify: Option<std::time::Instant>,
+    /// Re-auth prompt shown when user clicks reveal.
+    reauth_prompt: Option<MasterPasswordPromptUi>,
+    /// Which field triggered the re-auth.
+    reauth_target: RevealRequest,
+    /// Pending delete confirmation for a connection.
+    pending_delete_confirm: Option<Uuid>,
 }
 
 impl EshApp {
@@ -106,6 +115,10 @@ impl EshApp {
             palette: CommandPalette::default(),
             sidebar_visible: true,
             quit_requested: false,
+            last_master_verify: None,
+            reauth_prompt: None,
+            reauth_target: RevealRequest::None,
+            pending_delete_confirm: None,
         }
     }
 
@@ -717,17 +730,7 @@ impl App for EshApp {
                         }
                     }
                     if let Some(id) = action.delete {
-                        if let Some(removed) = self.store.remove(id) {
-                            if let Some(secrets) = self.secrets.as_mut() {
-                                forget_secrets(&removed, secrets);
-                            } else {
-                                self.pending
-                                    .push_back(PendingAction::Forget(removed.clone()));
-                            }
-                            self.persist();
-                            self.status = "Deleted connection".to_string();
-                            self.toaster.warn("Deleted", removed.name);
-                        }
+                        self.pending_delete_confirm = Some(id);
                     }
                     if let Some(req) = action.reorder {
                         if apply_reorder(&mut self.store, &req) {
@@ -739,6 +742,57 @@ impl App for EshApp {
         }
 
         self.poll_session_errors();
+
+        // Connection delete confirmation dialog
+        if let Some(id) = self.pending_delete_confirm {
+            let conn_name = self
+                .store
+                .find(id)
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "this connection".to_string());
+            let mut confirmed = false;
+            let mut dismissed = false;
+            egui::Window::new("Confirm Delete")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(&ctx, |ui| {
+                    ui.label(format!(
+                        "Are you sure you want to delete \"{}\"?",
+                        conn_name
+                    ));
+                    ui.label(
+                        egui::RichText::new("This action cannot be undone.")
+                            .small()
+                            .weak(),
+                    );
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete").clicked() {
+                            confirmed = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            dismissed = true;
+                        }
+                    });
+                });
+            if confirmed {
+                if let Some(removed) = self.store.remove(id) {
+                    if let Some(secrets) = self.secrets.as_mut() {
+                        forget_secrets(&removed, secrets);
+                    } else {
+                        self.pending
+                            .push_back(PendingAction::Forget(removed.clone()));
+                    }
+                    self.persist();
+                    self.status = "Deleted connection".to_string();
+                    self.toaster.warn("Deleted", removed.name);
+                }
+                self.pending_delete_confirm = None;
+            } else if dismissed {
+                self.pending_delete_confirm = None;
+            }
+        }
 
         if let Some(prompt) = self.master_prompt.as_mut() {
             match prompt.show(&ctx) {
@@ -801,6 +855,58 @@ impl App for EshApp {
                 self.editor = None;
             } else if result.cancelled {
                 self.editor = None;
+            }
+            if result.reveal_requested != RevealRequest::None {
+                let within_cache = self
+                    .last_master_verify
+                    .map(|t| t.elapsed() < std::time::Duration::from_secs(600))
+                    .unwrap_or(false);
+                if within_cache {
+                    if let Some(ed) = self.editor.as_mut() {
+                        match result.reveal_requested {
+                            RevealRequest::Password => ed.reveal_password = true,
+                            RevealRequest::Passphrase => ed.reveal_passphrase = true,
+                            RevealRequest::None => {}
+                        }
+                    }
+                } else {
+                    self.reauth_target = result.reveal_requested;
+                    self.reauth_prompt =
+                        Some(MasterPasswordPromptUi::new(MasterPasswordMode::Unlock));
+                }
+            }
+        }
+
+        // Re-auth prompt for reveal password
+        if let Some(prompt) = self.reauth_prompt.as_mut() {
+            match prompt.show(&ctx) {
+                MasterPasswordResult::Pending => {}
+                MasterPasswordResult::Submit(pw) => {
+                    if let Some(secrets) = &self.secrets {
+                        if secrets.verify_password(&pw) {
+                            self.last_master_verify = Some(std::time::Instant::now());
+                            if let Some(ed) = self.editor.as_mut() {
+                                match self.reauth_target {
+                                    RevealRequest::Password => ed.reveal_password = true,
+                                    RevealRequest::Passphrase => ed.reveal_passphrase = true,
+                                    RevealRequest::None => {}
+                                }
+                            }
+                            self.reauth_prompt = None;
+                            self.reauth_target = RevealRequest::None;
+                        } else {
+                            if let Some(p) = self.reauth_prompt.as_mut() {
+                                p.error = Some("Incorrect master password.".to_string());
+                                p.password.clear();
+                            }
+                        }
+                    } else {
+                        self.reauth_prompt = None;
+                        self.reauth_target = RevealRequest::None;
+                        self.toaster
+                            .error("Cannot verify", "Secrets are not unlocked");
+                    }
+                }
             }
         }
 

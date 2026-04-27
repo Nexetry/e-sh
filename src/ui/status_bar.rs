@@ -9,7 +9,7 @@ impl<'a> StatusBar<'a> {
         ui.horizontal(|ui| {
             ui.small(self.message);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.small("e-sh");
+                ui.small(format!("e-sh v{}", env!("CARGO_PKG_VERSION")));
             });
         });
     }
