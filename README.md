@@ -2,9 +2,10 @@
 
 > A unified, cross-platform remote connection manager built in Rust with `egui`.
 
-`e-sh` (the **e** stands for **egui**) is a single-binary desktop application for
-managing and launching remote sessions over **SSH**, **SFTP**, **RDP**, and **VNC** from one
-consistent interface.
+`e-sh` (the **e** stands for **egui**) is a desktop application for managing and
+launching remote sessions over **SSH**, **SFTP**, **RDP**, and **VNC** from one consistent
+interface. It ships as two binaries: the main `e-sh` UI and a companion `e-sh-rdp`
+helper that handles the RDP protocol.
 
 ---
 
@@ -15,9 +16,10 @@ terminal, an SFTP file browser, and a remote desktop viewer. `e-sh` brings these
 workflows together into a single native application that is fast to launch, easy
 to script, and consistent across Linux, macOS, and Windows.
 
-The goal is **one binary, one UI, every protocol you need every day** (SSH, SFTP,
-RDP, VNC) — without sacrificing the keyboard-first, low-overhead feel that power
-users expect.
+The goal is **one UI, every protocol you need every day** (SSH, SFTP, RDP, VNC) —
+without sacrificing the keyboard-first, low-overhead feel that power users expect.
+RDP support is handled by a lightweight companion binary (`e-sh-rdp`) that ships
+alongside the main application.
 
 ## Features
 
@@ -416,12 +418,12 @@ desktops, persist host keys), but expect breaking changes to config formats and 
 
 **Q: Why another remote connection manager?**
 Most existing tools are either single-protocol, web-based, or shipped as heavy
-Electron apps. `e-sh` aims for a single, fast, native binary that covers the
+Electron apps. `e-sh` aims for a fast, native application that covers the
 common protocols with a consistent UX.
 
 **Q: Why `egui` instead of GTK / Qt / Tauri?**
 `egui` gives us a single Rust dependency, zero web runtime, and a UI that feels
-the same on every OS — which matches the "single binary" goal.
+the same on every OS.
 
 **Q: Does it support agent forwarding / jump hosts / X11 forwarding?**
 Chained jump hosts (ProxyJump) are supported today with up to 8 hops per
