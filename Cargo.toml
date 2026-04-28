@@ -45,7 +45,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 parking_lot = "0.12"
 uuid = { version = "1", features = ["v4", "serde"] }
-rfd = "0.15"
+rfd = "0.17"
 age = "0.11"
 base64 = "0.22"
 nucleo-matcher = "0.3"
