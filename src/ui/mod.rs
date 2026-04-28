@@ -7,6 +7,7 @@ pub mod master_password_prompt;
 pub mod password_field;
 pub mod rdp_tab;
 pub mod recordings_view;
+pub mod settings_tab;
 pub mod sftp_tab;
 pub mod status_bar;
 pub mod terminal_widget;

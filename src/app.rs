@@ -14,6 +14,7 @@ use e_sh::config::secrets::SecretStore;
 use e_sh::config::store::{
     ConfigPaths, forget_secrets, hydrate_after_unlock, load_connections, save_connections,
 };
+use e_sh::config::theme::{Theme, apply_theme, load_theme};
 use e_sh::updater::{self, UpdateHandle, UpdateStatus};
 use e_sh::core::connection::{AuthMethod, Connection, ConnectionStore, Protocol};
 use e_sh::proto::rdp::spawn_rdp_session;
@@ -32,6 +33,7 @@ use e_sh::ui::master_password_prompt::{
 };
 use e_sh::ui::recordings_view::RecordingsTab;
 use e_sh::ui::rdp_tab::RdpTab;
+use e_sh::ui::settings_tab::SettingsTab;
 use e_sh::ui::sftp_tab::SftpTab;
 use e_sh::ui::status_bar::StatusBar;
 use e_sh::ui::terminal_widget::TerminalEmulator;
@@ -80,12 +82,17 @@ pub struct EshApp {
     update_resolved: bool,
     /// In-progress self-update.
     apply_handle: Option<updater::ApplyHandle>,
+    /// Current UI theme.
+    current_theme: Theme,
+    /// Whether the theme has been applied to the egui context at least once.
+    theme_applied: bool,
 }
 
 impl EshApp {
     pub fn new(_cc: &CreationContext<'_>, rt: Handle) -> Self {
         let paths = Arc::new(ConfigPaths::discover().expect("config paths"));
         let update_handle = updater::spawn_update_check(&rt);
+        let current_theme = load_theme(&paths.config_dir);
         let mut store = load_connections(&paths).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "failed loading connections, starting empty");
             ConnectionStore::default()
@@ -137,6 +144,8 @@ impl EshApp {
             update_banner: None,
             update_resolved: false,
             apply_handle: None,
+            current_theme,
+            theme_applied: false,
         }
     }
 
@@ -483,9 +492,9 @@ impl EshApp {
             hint: "".to_string(),
         });
         items.push(CommandItem {
-            command: Command::OpenRecordings,
-            label: "Open recordings".to_string(),
-            detail: "Browse captured SSH / SFTP sessions".to_string(),
+            command: Command::OpenSettings,
+            label: "Open settings".to_string(),
+            detail: "Theme, recordings, and preferences".to_string(),
             hint: "".to_string(),
         });
         if self.has_active_terminal() {
@@ -604,6 +613,7 @@ impl EshApp {
                 }
             }
             Command::OpenRecordings => self.open_recordings_tab(),
+            Command::OpenSettings => self.open_settings_tab(),
             Command::Quit => {
                 self.quit_requested = true;
             }
@@ -638,6 +648,24 @@ impl EshApp {
         let tab = RecordingsTab::new(self.paths.recordings_dir.clone());
         self.dock.push_to_focused_leaf(EshTab::Recordings(tab));
         self.status = "Opened recordings".to_string();
+    }
+
+    fn open_settings_tab(&mut self) {
+        let existing: Option<Uuid> = self.dock.iter_all_tabs().find_map(|(_, tab)| match tab {
+            EshTab::Settings(t) => Some(t.id),
+            _ => None,
+        });
+        if let Some(id) = existing {
+            self.focus_tab_by_id(id);
+            return;
+        }
+        let tab = SettingsTab::new(
+            self.paths.config_dir.clone(),
+            self.paths.recordings_dir.clone(),
+            self.current_theme.clone(),
+        );
+        self.push_tab(EshTab::Settings(tab));
+        self.status = "Opened settings".to_string();
     }
 
     fn close_active_tab(&mut self) {
@@ -898,7 +926,7 @@ impl EshApp {
                         }
                     }
                 }
-                EshTab::Recordings(_) => {}
+                EshTab::Recordings(_) | EshTab::Settings(_) => {}
             }
         }
     }
@@ -907,6 +935,12 @@ impl EshApp {
 impl App for EshApp {
     fn ui(&mut self, ui: &mut Ui, frame: &mut Frame) {
         let ctx = ui.ctx().clone();
+
+        // Apply theme on first frame or when changed.
+        if !self.theme_applied {
+            apply_theme(&ctx, &self.current_theme);
+            self.theme_applied = true;
+        }
 
         let palette_primary = KeyboardShortcut::new(Modifiers::COMMAND, Key::K);
         let palette_alt = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
@@ -953,8 +987,8 @@ impl App for EshApp {
                     if action.new_connection {
                         self.start_new_connection();
                     }
-                    if action.open_recordings {
-                        self.open_recordings_tab();
+                    if action.open_settings {
+                        self.open_settings_tab();
                     }
                     if let Some(id) = action.open {
                         self.open_connection(id);
@@ -1177,6 +1211,27 @@ impl App for EshApp {
             });
 
         if let Some(act) = self.viewer.recordings_action.take() {
+            if let Some((title, body)) = act.toast_info {
+                self.toaster.info(title, body);
+            }
+            if let Some((title, body)) = act.toast_warn {
+                self.toaster.warn(title, body);
+            }
+            if let Some((title, body)) = act.toast_error {
+                self.toaster.error(title, body);
+            }
+        }
+
+        if let Some(act) = self.viewer.settings_action.take() {
+            if act.theme_changed {
+                // Sync theme from the settings tab back to the app.
+                if let Some((_, tab)) = self.dock.iter_all_tabs().find(|(_, t)| matches!(t, EshTab::Settings(_))) {
+                    if let EshTab::Settings(st) = tab {
+                        self.current_theme = st.current_theme.clone();
+                        apply_theme(&ctx, &self.current_theme);
+                    }
+                }
+            }
             if let Some((title, body)) = act.toast_info {
                 self.toaster.info(title, body);
             }

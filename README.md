@@ -24,10 +24,10 @@ users expect.
 ### Working today
 
 - Native, GPU-accelerated UI powered by [`egui`](https://github.com/emilk/egui) + `egui_dock`
-- Royal-TSX-style layout: connection tree on the left, dockable tabbed terminals, status bar
+- Multi-pane Layout: connection tree on the left, dockable tabbed terminals, status bar
 - Connection manager with add / edit / delete and right-click menu, grouped by tag
 - Inline `+` button on the sidebar to create a new connection
-- Polished Royal-TSX-style edit dialog (header / grouped sidebar / scrollable detail / footer)
+- Polished layout edit dialog (header / grouped sidebar / scrollable detail / footer)
 - Toast notifications (info / success / warn / error) for connect, disconnect, save, delete, host-key, persistence, and session-end events
 - Persistent TOML store for connections (per-OS config dir) with transparent backward-compatible migration
 - **SSH** interactive shell:
@@ -379,7 +379,7 @@ desktops, persist host keys), but expect breaking changes to config formats and 
 - [x] SSH tunnels (`-L`, `-R`, `-D` SOCKS5)
 - [x] Chained jump host / bastion (ProxyJump, ordered N-hop)
 - [x] Per-session tunnel status display (collapsible)
-- [x] Royal-TSX-style edit dialog
+- [x] edit dialog
 - [x] SSH agent authentication
 - [x] Credential storage via `age`-encrypted secret store
 - [x] Terminal scrollback UI + selection / copy / paste
@@ -397,15 +397,19 @@ desktops, persist host keys), but expect breaking changes to config formats and 
 ## Screenshots
 
 ### SSH multi-session with dockable tabs
+
 ![SSH multi-session](doc/screenshots/ssh_multi_frame.png)
 
 ### SFTP dual-pane file browser
+
 ![SFTP browser](doc/screenshots/sftp.png)
 
 ### VNC remote desktop viewer
+
 ![VNC viewer](doc/screenshots/vnc.png)
 
 ### Master password prompt
+
 ![Master password](doc/screenshots/master_password.png)
 
 ## FAQ

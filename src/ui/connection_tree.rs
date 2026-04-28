@@ -29,7 +29,7 @@ pub struct TreeAction {
     pub duplicate: Option<Uuid>,
     pub delete: Option<Uuid>,
     pub new_connection: bool,
-    pub open_recordings: bool,
+    pub open_settings: bool,
     pub reorder: Option<ReorderRequest>,
 }
 
@@ -51,11 +51,11 @@ impl<'a> ConnectionTree<'a> {
         ui.separator();
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             if ui
-                .selectable_label(false, "Recordings")
-                .on_hover_text("Browse captured SSH and SFTP sessions")
+                .selectable_label(false, "⚙ Settings")
+                .on_hover_text("Theme, recordings, and preferences")
                 .clicked()
             {
-                action.open_recordings = true;
+                action.open_settings = true;
             }
             ui.separator();
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
