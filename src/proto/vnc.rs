@@ -8,7 +8,7 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use des::cipher::{BlockEncrypt, KeyInit};
+use des::cipher::{BlockCipherEncrypt, KeyInit};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::core::connection::{AuthMethod, Connection};
@@ -134,11 +134,11 @@ fn vnc_auth_response(challenge: &[u8; 16], password: &str) -> [u8; 16] {
 
     let mut response = [0u8; 16];
     // Encrypt each 8-byte block of the challenge with single-DES ECB.
-    let mut block0 = des::cipher::generic_array::GenericArray::clone_from_slice(&challenge[0..8]);
+    let mut block0: des::cipher::Array<u8, _> = challenge[0..8].try_into().unwrap();
     cipher.encrypt_block(&mut block0);
     response[0..8].copy_from_slice(&block0);
 
-    let mut block1 = des::cipher::generic_array::GenericArray::clone_from_slice(&challenge[8..16]);
+    let mut block1: des::cipher::Array<u8, _> = challenge[8..16].try_into().unwrap();
     cipher.encrypt_block(&mut block1);
     response[8..16].copy_from_slice(&block1);
 
