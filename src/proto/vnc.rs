@@ -119,17 +119,34 @@ const ENCODING_COPYRECT: i32 = 1;
 // VNC (DES) authentication challenge-response
 // ---------------------------------------------------------------------------
 
-/// Perform VNC DES challenge-response authentication.
-/// The server sends a 16-byte challenge; we encrypt it with the password
-/// (truncated/padded to 8 bytes, each byte bit-reversed) using single-DES ECB.
+/// Perform VNC DES challenge-response authentication (RFB §7.2.2).
+///
+/// The server sends a 16-byte random challenge; we encrypt it with the user's
+/// password (truncated/padded to 8 bytes, each byte bit-reversed) using
+/// single-DES in ECB mode and return the 16-byte ciphertext.
+///
+/// # Security note
+///
+/// Single-DES is a weak cipher and the 8-byte password limit is poor by modern
+/// standards.  However, this is the *only* authentication handshake defined by
+/// the core RFB protocol (security-type 2).  Every conforming VNC client must
+/// implement it exactly this way — the key derivation, bit-reversal, and
+/// algorithm are all mandated by the spec and cannot be substituted.
+///
+/// For stronger transport security, prefer connecting through an SSH tunnel or
+/// using a VNC server that supports VeNCrypt (TLS-wrapped RFB).
+///
+/// CodeQL: "Use of a broken or weak cryptographic algorithm" — intentional,
+/// protocol-mandated.  See RFC 6143 §7.2.2.
 fn vnc_auth_response(challenge: &[u8; 16], password: &str) -> [u8; 16] {
     // Prepare the key: take first 8 bytes of password, pad with zeros,
-    // and reverse the bits of each byte (VNC quirk).
-    let mut key = [0u8; 8];
+    // and reverse the bits of each byte (required by the RFB spec).
+    let mut key = [0u8; 8]; // CodeQL: not a hard-coded secret — zero-padding per RFB spec
     for (i, &b) in password.as_bytes().iter().take(8).enumerate() {
         key[i] = reverse_bits(b);
     }
 
+    // CodeQL: DES is weak but mandated by the VNC/RFB protocol (RFC 6143 §7.2.2).
     let cipher = des::Des::new_from_slice(&key).expect("DES key is 8 bytes");
 
     let mut response = [0u8; 16];
@@ -145,6 +162,11 @@ fn vnc_auth_response(challenge: &[u8; 16], password: &str) -> [u8; 16] {
     response
 }
 
+/// Reverse the bits of a single byte.
+///
+/// The RFB spec requires each byte of the DES key to be bit-reversed before
+/// use.  The constants here (shift amounts, mask `1`) are arithmetic, not
+/// cryptographic secrets.
 fn reverse_bits(b: u8) -> u8 {
     let mut r = 0u8;
     for i in 0..8 {
