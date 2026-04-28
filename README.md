@@ -21,6 +21,24 @@ without sacrificing the keyboard-first, low-overhead feel that power users expec
 RDP support is handled by a lightweight companion binary (`e-sh-rdp`) that ships
 alongside the main application.
 
+## Screenshots
+
+### SSH multi-session with dockable tabs
+
+![SSH multi-session](doc/screenshots/ssh_multi_frame.png)
+
+### SFTP dual-pane file browser
+
+![SFTP browser](doc/screenshots/sftp.png)
+
+### VNC remote desktop viewer
+
+![VNC viewer](doc/screenshots/vnc.png)
+
+### Master password prompt
+
+![Master password](doc/screenshots/master_password.png)
+
 ## Features
 
 ### Working today
@@ -395,24 +413,6 @@ desktops, persist host keys), but expect breaking changes to config formats and 
 - [x] VNC remote desktop viewer (pure-Rust RFB client, embedded viewer)
 - [x] Automatic update checker (GitHub Releases API, non-blocking)
 - [ ] Plugin / scripting hooks
-
-## Screenshots
-
-### SSH multi-session with dockable tabs
-
-![SSH multi-session](doc/screenshots/ssh_multi_frame.png)
-
-### SFTP dual-pane file browser
-
-![SFTP browser](doc/screenshots/sftp.png)
-
-### VNC remote desktop viewer
-
-![VNC viewer](doc/screenshots/vnc.png)
-
-### Master password prompt
-
-![Master password](doc/screenshots/master_password.png)
 
 ## FAQ
 
