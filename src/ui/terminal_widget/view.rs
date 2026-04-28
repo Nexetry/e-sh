@@ -170,6 +170,13 @@ impl<'a> TerminalView<'a> {
             response.request_focus();
         }
 
+        // Auto-focus the terminal when the tab is shown (e.g. after switching
+        // tabs) so keystrokes reach the remote shell immediately.  Skip when
+        // the find bar is open so it keeps its own focus.
+        if !response.has_focus() && !self.emulator.find.open {
+            response.request_focus();
+        }
+
         let to_cell = |pos: Pos2| -> (i32, usize, Side) {
             let local_x = (pos.x - origin.x).max(0.0);
             let local_y = (pos.y - origin.y).max(0.0);
