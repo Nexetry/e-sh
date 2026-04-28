@@ -400,24 +400,41 @@ fn render_local_pane(ui: &mut Ui, tab: &mut SftpTab) {
                                     let icon = if entry.is_dir { "\u{1F4C1}" } else { "\u{1F4C4}" };
                                     let label = format!("{icon}  {}", entry.name);
                                     let selected = tab.local_selected.contains(&entry.path);
-                                    let resp = ui.selectable_label(selected, label);
-                                    if resp.clicked() {
+                                    let cell_size = egui::vec2(ui.available_width(), ui.available_height());
+                                    let (cell_rect, cell_resp) = ui.allocate_exact_size(cell_size, egui::Sense::click());
+                                    let bg = if selected {
+                                        ui.visuals().selection.bg_fill
+                                    } else if cell_resp.hovered() {
+                                        ui.visuals().widgets.hovered.bg_fill
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    };
+                                    ui.painter().rect_filled(cell_rect, 0.0, bg);
+                                    let text_pos = cell_rect.left_center() - egui::vec2(0.0, ui.text_style_height(&egui::TextStyle::Body) / 2.0);
+                                    ui.painter().text(
+                                        egui::pos2(text_pos.x + 4.0, text_pos.y),
+                                        egui::Align2::LEFT_TOP,
+                                        &label,
+                                        egui::TextStyle::Body.resolve(ui.style()),
+                                        ui.visuals().text_color(),
+                                    );
+                                    if cell_resp.clicked() {
                                         let mods = ui.input(|i| i.modifiers);
                                         update_local_selection(tab, &entries, idx, mods);
                                     }
-                                    if resp.secondary_clicked() && !tab.local_selected.contains(&entry.path) {
+                                    if cell_resp.secondary_clicked() && !tab.local_selected.contains(&entry.path) {
                                         tab.local_selected.clear();
                                         tab.local_selected.insert(entry.path.clone());
                                         tab.local_anchor = Some(entry.path.clone());
                                     }
-                                    if resp.double_clicked() && entry.is_dir {
+                                    if cell_resp.double_clicked() && entry.is_dir {
                                         tab.local_cwd = entry.path.clone();
                                         tab.local_selected.clear();
                                         tab.local_anchor = None;
                                         tab.local_path_dirty = false;
                                         tab.local_path_buffer = tab.local_cwd.display().to_string();
                                     }
-                                    local_entry_context_menu(&resp, tab, entry);
+                                    local_entry_context_menu(&cell_resp, tab, entry);
                                 });
                                 row.col(|ui| { ui.label(RichText::new(format_size(entry.size)).small().monospace()); });
                                 row.col(|ui| { ui.label(RichText::new(format_mtime(entry.modified)).small().monospace()); });
@@ -605,23 +622,40 @@ fn render_remote_pane(ui: &mut Ui, tab: &mut SftpTab) {
                                     };
                                     let label = format!("{icon}  {}", entry.name);
                                     let selected = tab.remote_selected.contains(&entry.name);
-                                    let resp = ui.selectable_label(selected, label);
-                                    if resp.clicked() {
+                                    let cell_size = egui::vec2(ui.available_width(), ui.available_height());
+                                    let (cell_rect, cell_resp) = ui.allocate_exact_size(cell_size, egui::Sense::click());
+                                    let bg = if selected {
+                                        ui.visuals().selection.bg_fill
+                                    } else if cell_resp.hovered() {
+                                        ui.visuals().widgets.hovered.bg_fill
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    };
+                                    ui.painter().rect_filled(cell_rect, 0.0, bg);
+                                    let text_pos = cell_rect.left_center() - egui::vec2(0.0, ui.text_style_height(&egui::TextStyle::Body) / 2.0);
+                                    ui.painter().text(
+                                        egui::pos2(text_pos.x + 4.0, text_pos.y),
+                                        egui::Align2::LEFT_TOP,
+                                        &label,
+                                        egui::TextStyle::Body.resolve(ui.style()),
+                                        ui.visuals().text_color(),
+                                    );
+                                    if cell_resp.clicked() {
                                         let mods = ui.input(|i| i.modifiers);
                                         update_remote_selection(tab, &entries, idx, mods);
                                     }
-                                    if resp.secondary_clicked() && !tab.remote_selected.contains(&entry.name) {
+                                    if cell_resp.secondary_clicked() && !tab.remote_selected.contains(&entry.name) {
                                         tab.remote_selected.clear();
                                         tab.remote_selected.insert(entry.name.clone());
                                         tab.remote_anchor = Some(entry.name.clone());
                                     }
-                                    if resp.double_clicked() && entry.is_dir {
+                                    if cell_resp.double_clicked() && entry.is_dir {
                                         let path = join_remote(&tab.remote_cwd, &entry.name);
                                         tab.remote_loading = true;
                                         tab.remote_path_dirty = false;
                                         let _ = tab.handle.commands.send(SftpCommand::ListDir { path });
                                     }
-                                    remote_entry_context_menu(&resp, tab, entry);
+                                    remote_entry_context_menu(&cell_resp, tab, entry);
                                 });
                                 row.col(|ui| { ui.label(RichText::new(format_size(entry.size)).small().monospace()); });
                                 row.col(|ui| { ui.label(RichText::new(format_mtime(entry.modified)).small().monospace()); });

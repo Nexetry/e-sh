@@ -389,6 +389,7 @@ pub(crate) async fn establish_session(
     let mut cfg = client::Config::default();
     if target.keepalive_secs > 0 {
         cfg.keepalive_interval = Some(Duration::from_secs(target.keepalive_secs as u64));
+        cfg.keepalive_max = 0; // don't disconnect on missed replies — just keep pinging
     }
     let config = Arc::new(cfg);
 
