@@ -20,6 +20,7 @@ pub enum Command {
     LockSecrets,
     FindInTerminal,
     OpenRecordings,
+    OpenSettings,
     Quit,
 }
 

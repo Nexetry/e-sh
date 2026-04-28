@@ -5,6 +5,7 @@ use uuid::Uuid;
 use crate::proto::ssh::TunnelStatusKind;
 use crate::ui::recordings_view::{RecordingsAction, RecordingsTab, render_recordings_tab};
 use crate::ui::rdp_tab::{RdpTab, render_rdp_tab};
+use crate::ui::settings_tab::{SettingsAction, SettingsTab, render_settings_tab};
 use crate::ui::sftp_tab::{SftpTab, render_sftp_tab};
 use crate::ui::terminal_widget::{TerminalEmulator, TerminalView};
 use crate::ui::vnc_tab::{VncTab, render_vnc_tab};
@@ -25,6 +26,7 @@ pub enum EshTab {
     Rdp(RdpTab),
     Vnc(VncTab),
     Recordings(RecordingsTab),
+    Settings(SettingsTab),
 }
 
 impl EshTab {
@@ -35,6 +37,7 @@ impl EshTab {
             EshTab::Rdp(t) => t.id,
             EshTab::Vnc(t) => t.id,
             EshTab::Recordings(t) => t.id,
+            EshTab::Settings(t) => t.id,
         }
     }
 
@@ -45,6 +48,7 @@ impl EshTab {
             EshTab::Rdp(t) => &t.title,
             EshTab::Vnc(t) => &t.title,
             EshTab::Recordings(t) => &t.title,
+            EshTab::Settings(t) => &t.title,
         }
     }
 
@@ -54,7 +58,7 @@ impl EshTab {
             EshTab::Sftp(t) => t.source_connection,
             EshTab::Rdp(t) => t.source_connection,
             EshTab::Vnc(t) => t.source_connection,
-            EshTab::Recordings(_) => None,
+            EshTab::Recordings(_) | EshTab::Settings(_) => None,
         }
     }
 
@@ -64,7 +68,7 @@ impl EshTab {
             EshTab::Sftp(t) => t.tab_color,
             EshTab::Rdp(t) => t.tab_color,
             EshTab::Vnc(t) => t.tab_color,
-            EshTab::Recordings(_) => None,
+            EshTab::Recordings(_) | EshTab::Settings(_) => None,
         }
     }
 
@@ -74,7 +78,7 @@ impl EshTab {
             EshTab::Sftp(t) => t.tab_color = color,
             EshTab::Rdp(t) => t.tab_color = color,
             EshTab::Vnc(t) => t.tab_color = color,
-            EshTab::Recordings(_) => {}
+            EshTab::Recordings(_) | EshTab::Settings(_) => {}
         }
     }
 
@@ -100,6 +104,7 @@ pub enum TabAction {
 pub struct EshTabViewer {
     pub actions: Vec<TabAction>,
     pub recordings_action: Option<RecordingsAction>,
+    pub settings_action: Option<SettingsAction>,
 }
 
 const TAB_COLOR_PRESETS: &[(&str, Color32)] = &[
@@ -157,6 +162,16 @@ impl TabViewer for EshTabViewer {
                     self.recordings_action = Some(act);
                 }
             }
+            EshTab::Settings(t) => {
+                let act = render_settings_tab(ui, t);
+                let has = act.toast_info.is_some()
+                    || act.toast_warn.is_some()
+                    || act.toast_error.is_some()
+                    || act.theme_changed;
+                if has {
+                    self.settings_action = Some(act);
+                }
+            }
         }
     }
 
@@ -169,7 +184,7 @@ impl TabViewer for EshTabViewer {
     }
 
     fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _path: NodePath) {
-        if matches!(tab, EshTab::Recordings(_)) {
+        if matches!(tab, EshTab::Recordings(_) | EshTab::Settings(_)) {
             return;
         }
 
