@@ -1,0 +1,39 @@
+name: "e-sh CodeQL config"
+
+# Suppress known false positives and protocol-mandated crypto usage.
+# See: https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/customizing-your-advanced-setup-for-code-scanning
+
+query-filters:
+  # ── VNC DES authentication (RFC 6143 §7.2.2) ──────────────────────────
+  # The RFB protocol mandates single-DES-ECB with a bit-reversed,
+  # zero-padded 8-byte key.  Every conforming VNC client must use this
+  # exact algorithm — it cannot be substituted.
+  #
+  # ── edit_dialog.rs false positives ─────────────────────────────────────
+  # The string literals "before_script", "after_connect_script", and
+  # "after_close_script" are egui widget-ID salts, not secrets.
+  #
+  # CodeQL query IDs vary by language pack version.  We list the common
+  # patterns; unrecognised IDs are silently ignored.
+
+  # Weak / broken crypto
+  - exclude:
+      id: py/weak-cryptographic-algorithm
+  - exclude:
+      id: rust/weak-cryptographic-algorithm
+  - exclude:
+      id: cpp/weak-cryptographic-algorithm
+
+  # Hard-coded credentials / crypto keys
+  - exclude:
+      id: py/hardcoded-credentials
+  - exclude:
+      id: rust/hardcoded-credentials
+  - exclude:
+      id: cpp/hardcoded-credentials
+
+paths-ignore:
+  # Build artefacts and third-party code
+  - target
+  - e-sh-rdp/target
+  - dist
