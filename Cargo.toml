@@ -35,7 +35,7 @@ russh = "0.60.1"
 russh-sftp = "2.1.1"
 alacritty_terminal = "0.26"
 serde = { version = "1", features = ["derive"] }
-toml = "0.9"
+toml = "1.1"
 directories = "6"
 anyhow = "1"
 des = "0.9"
