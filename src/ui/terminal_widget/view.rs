@@ -170,10 +170,15 @@ impl<'a> TerminalView<'a> {
             response.request_focus();
         }
 
-        // Auto-focus the terminal when the tab is shown (e.g. after switching
-        // tabs) so keystrokes reach the remote shell immediately.  Skip when
-        // the find bar is open so it keeps its own focus.
-        if !response.has_focus() && !self.emulator.find.open {
+        // Auto-focus the terminal when the tab first appears (e.g. after
+        // switching to this tab) so keystrokes reach the remote shell
+        // immediately.  We only request focus on the *first* frame the
+        // terminal is rendered to avoid stealing focus from other tabs
+        // (like Settings) on subsequent frames.
+        let appeared_key = egui::Id::new(("term_appeared", self.emulator as *const _ as usize));
+        let was_visible_last_frame = ui.data(|d| d.get_temp::<bool>(appeared_key).unwrap_or(false));
+        ui.data_mut(|d| d.insert_temp(appeared_key, true));
+        if !was_visible_last_frame && !response.has_focus() && !self.emulator.find.open {
             response.request_focus();
         }
 
