@@ -1172,7 +1172,7 @@ dependencies = [
 
 [[package]]
 name = "e-sh"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "age",
  "alacritty_terminal",

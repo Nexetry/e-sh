@@ -1,6 +1,6 @@
 [package]
 name = "e-sh"
-version = "2.3.0"
+version = "2.4.0"
 edition = "2024"
 authors = ["chakyiu <lcyharry@hotmail.com>"]
 description = "A unified cross-platform remote connection manager (SSH, SFTP, RDP, VNC) built in Rust with egui."
