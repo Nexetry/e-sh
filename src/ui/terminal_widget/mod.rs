@@ -189,6 +189,14 @@ impl TerminalEmulator {
         term.selection = Some(Selection::new(SelectionType::Simple, point, side));
     }
 
+    pub fn begin_semantic_selection(&mut self, line: i32, col: usize) {
+        let mut term = self.term.lock();
+        let cols = term.columns();
+        let column = Column(col.min(cols.saturating_sub(1)));
+        let point = Point::new(Line(line), column);
+        term.selection = Some(Selection::new(SelectionType::Semantic, point, Side::Left));
+    }
+
     pub fn update_selection(&mut self, line: i32, col: usize, side: Side) {
         let mut term = self.term.lock();
         let cols = term.columns();

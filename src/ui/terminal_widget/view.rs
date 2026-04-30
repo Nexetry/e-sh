@@ -195,10 +195,34 @@ impl<'a> TerminalView<'a> {
             (line, col, side)
         };
 
+        // Capture the pointer-press position so we can use it as the
+        // selection anchor.  `drag_started()` fires only after the pointer
+        // has moved past a threshold, so `interact_pointer_pos()` at that
+        // point may already be on the *next* character.  By recording the
+        // press position we guarantee the cell the user originally clicked
+        // is included in the selection.
+        let press_key = egui::Id::new(("term_press_pos", self.emulator as *const _ as usize));
+        let primary_pressed = ui.ctx().input(|i| {
+            i.pointer.button_pressed(egui::PointerButton::Primary)
+        });
+        if primary_pressed {
+            if let Some(pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
+                if response.rect.contains(pos) {
+                    ui.data_mut(|d| d.insert_temp(press_key, pos));
+                }
+            }
+        }
+
         if response.drag_started() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let (line, col, side) = to_cell(pos);
-                self.emulator.begin_selection(line, col, side);
+            // Use the stored press position for the anchor, falling back to
+            // the current pointer position if unavailable.
+            let anchor_pos: Option<Pos2> = ui.data(|d| d.get_temp(press_key));
+            let pos = anchor_pos.or(response.interact_pointer_pos());
+            if let Some(pos) = pos {
+                let (line, col, _side) = to_cell(pos);
+                // Always anchor on the Left side so the character under the
+                // cursor is included when dragging forward.
+                self.emulator.begin_selection(line, col, Side::Left);
             }
         } else if response.dragged() {
             if let Some(pos) = response.interact_pointer_pos() {
@@ -209,7 +233,26 @@ impl<'a> TerminalView<'a> {
 
         let single_click = response.clicked() && !response.dragged();
         if single_click {
-            self.emulator.clear_selection();
+            let dblclick_key = egui::Id::new(("term_last_click", self.emulator as *const _ as usize));
+            let now = ui.ctx().input(|i| i.time);
+            let anchor_pos: Option<Pos2> = ui.data(|d| d.get_temp(press_key));
+            let pos = anchor_pos.or(response.interact_pointer_pos());
+            if let Some(pos) = pos {
+                let (line, col, _side) = to_cell(pos);
+                let prev: Option<(f64, i32, usize)> = ui.data(|d| d.get_temp(dblclick_key));
+                let is_double = prev
+                    .map(|(t, pl, pc)| (now - t) < 0.4 && pl == line && pc == col)
+                    .unwrap_or(false);
+                ui.data_mut(|d| d.insert_temp(dblclick_key, (now, line, col)));
+
+                if is_double {
+                    self.emulator.begin_semantic_selection(line, col);
+                } else {
+                    self.emulator.clear_selection();
+                }
+            } else {
+                self.emulator.clear_selection();
+            }
         }
 
         if response.hovered() {
