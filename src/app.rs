@@ -1,7 +1,7 @@
 use age::secrecy::SecretString;
 use eframe::{App, CreationContext, Frame};
 use egui::{CentralPanel, Key, KeyboardShortcut, Modifiers, Panel, Ui};
-use egui_dock::{DockArea, DockState, Style};
+use egui_dock::{DockArea, DockState, Style, TabAddAlign};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -20,6 +20,7 @@ use e_sh::core::connection::{AuthMethod, Connection, ConnectionStore, Protocol};
 use e_sh::proto::rdp::spawn_rdp_session;
 use e_sh::proto::sftp::spawn_sftp_session;
 use e_sh::proto::ssh::{HostKeyContext, spawn_session};
+use e_sh::proto::local::spawn_local_shell;
 use e_sh::proto::vnc::spawn_vnc_session;
 use e_sh::recording::{self, Kind as RecordingKind, StartParams};
 use e_sh::ui::command_palette::{Command, CommandItem, CommandPalette, PaletteResult};
@@ -419,6 +420,22 @@ impl EshApp {
         }
     }
 
+    fn open_local_terminal(&mut self) {
+        let handle = spawn_local_shell(&self.rt);
+        let emulator = TerminalEmulator::new(handle, 80, 24);
+        let tab = EshTab::Terminal(TerminalTab {
+            id: Uuid::new_v4(),
+            source_connection: None,
+            title: "Local Shell".to_string(),
+            connection_label: whoami_user(),
+            emulator,
+            closed_reported: false,
+            tab_color: None,
+        });
+        self.push_tab(tab);
+        self.status = "Opened local shell".to_string();
+    }
+
     fn start_new_connection(&mut self) {
         let new_conn = Connection::new_ssh(
             format!("Connection {}", self.store.connections.len() + 1),
@@ -799,7 +816,16 @@ impl EshApp {
                         );
                         self.apply_handle = None;
                         // Attempt to relaunch.
-                        let _ = std::process::Command::new(&restart_path).spawn();
+                        // On Windows the restart_path is a .bat script that
+                        // waits for this process to exit before swapping files,
+                        // so we launch it via cmd.exe detached.
+                        if restart_path.extension().map(|e| e == "bat").unwrap_or(false) {
+                            let _ = std::process::Command::new("cmd")
+                                .args(["/C", "start", "", &restart_path.to_string_lossy()])
+                                .spawn();
+                        } else {
+                            let _ = std::process::Command::new(&restart_path).spawn();
+                        }
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         return;
                     }
@@ -1199,14 +1225,37 @@ impl App for EshApp {
         CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show_inside(ui, |ui| {
-                if self.dock.main_surface_mut().is_empty() {
-                    ui.centered_and_justified(|ui| {
-                        ui.heading("Open a connection from the sidebar");
-                    });
+                let mut dock_style = Style::from_egui(ctx.global_style().as_ref());
+                dock_style.buttons.add_tab_align = TabAddAlign::Left;
+
+                let has_no_tabs = self.dock.iter_all_tabs().next().is_none();
+                if has_no_tabs {
+                    // Draw a tab-bar-like strip with just the "+" button so the
+                    // user can open a local shell even when no tabs exist.
+                    let bar_height = dock_style.tab_bar.height;
+                    let (bar_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), bar_height),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().rect_filled(
+                        bar_rect,
+                        dock_style.tab_bar.corner_radius,
+                        dock_style.tab_bar.bg_fill,
+                    );
+                    let btn_size = egui::vec2(24.0, bar_height);
+                    let btn_rect = egui::Rect::from_min_size(bar_rect.left_top(), btn_size);
+                    let btn_resp = ui.put(btn_rect, egui::Button::new("+").frame(false));
+                    if btn_resp.clicked() {
+                        self.viewer.add_local_tab_requested = true;
+                    }
                     return;
                 }
+
                 DockArea::new(&mut self.dock)
-                    .style(Style::from_egui(ctx.global_style().as_ref()))
+                    .show_add_buttons(true)
+                    .show_leaf_close_all_buttons(true)
+                    .show_leaf_collapse_buttons(false)
+                    .style(dock_style)
                     .show_inside(ui, &mut self.viewer);
             });
 
@@ -1246,6 +1295,11 @@ impl App for EshApp {
         let tab_actions = std::mem::take(&mut self.viewer.actions);
         for action in tab_actions {
             self.handle_tab_action(action);
+        }
+
+        if self.viewer.add_local_tab_requested {
+            self.viewer.add_local_tab_requested = false;
+            self.open_local_terminal();
         }
 
         let palette_items = self.build_palette_items();

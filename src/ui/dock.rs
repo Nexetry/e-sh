@@ -105,6 +105,7 @@ pub struct EshTabViewer {
     pub actions: Vec<TabAction>,
     pub recordings_action: Option<RecordingsAction>,
     pub settings_action: Option<SettingsAction>,
+    pub add_local_tab_requested: bool,
 }
 
 const TAB_COLOR_PRESETS: &[(&str, Color32)] = &[
@@ -181,6 +182,10 @@ impl TabViewer for EshTabViewer {
 
     fn clear_background(&self, _tab: &Self::Tab) -> bool {
         true
+    }
+
+    fn on_add(&mut self, _path: NodePath) {
+        self.add_local_tab_requested = true;
     }
 
     fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _path: NodePath) {

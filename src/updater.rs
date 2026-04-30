@@ -361,25 +361,82 @@ fn swap_binary(
     let new_bin = find_file_in_dir(tmp_dir, bin_name)
         .ok_or_else(|| anyhow::anyhow!("'{}' not found in downloaded archive", bin_name))?;
 
-    let backup = current_exe.with_extension("bak");
-    if backup.exists() {
+    if cfg!(target_os = "windows") {
+        // On Windows the running executable is locked by the OS, so we cannot
+        // rename or overwrite it directly.  Instead we:
+        //   1. Place the new binary next to the current one with a `.new` suffix.
+        //   2. Write a small batch script that waits for this process to exit,
+        //      swaps the files, and relaunches the app.
+        //   3. Return the path to the batch script so the caller can launch it
+        //      before quitting.
+        let new_dest = current_exe.with_extension("new.exe");
+        if new_dest.exists() {
+            std::fs::remove_file(&new_dest).ok();
+        }
+        std::fs::copy(&new_bin, &new_dest)
+            .with_context(|| format!("copying new binary to {}", new_dest.display()))?;
+
+        // Also update the companion e-sh-rdp.exe if present in the archive.
+        let rdp_current = current_exe.with_file_name("e-sh-rdp.exe");
+        let rdp_new_dest = current_exe.with_file_name("e-sh-rdp.new.exe");
+        if let Some(rdp_bin) = find_file_in_dir(tmp_dir, "e-sh-rdp.exe") {
+            if rdp_new_dest.exists() {
+                std::fs::remove_file(&rdp_new_dest).ok();
+            }
+            std::fs::copy(&rdp_bin, &rdp_new_dest).ok();
+        }
+
+        let script = current_exe.with_extension("update.bat");
+        let exe_path = current_exe.to_string_lossy();
+        let new_path = new_dest.to_string_lossy();
+        let rdp_path = rdp_current.to_string_lossy();
+        let rdp_new_path = rdp_new_dest.to_string_lossy();
+
+        // The batch script:
+        //  - Waits in a loop until the old exe is no longer locked
+        //  - Replaces the old exe with the new one
+        //  - Optionally replaces e-sh-rdp.exe
+        //  - Relaunches the app
+        //  - Deletes itself
+        let bat_content = format!(
+            "@echo off\r\n\
+             :wait\r\n\
+             timeout /t 1 /nobreak >nul\r\n\
+             del \"{exe_path}\" >nul 2>&1\r\n\
+             if exist \"{exe_path}\" goto wait\r\n\
+             move /y \"{new_path}\" \"{exe_path}\" >nul\r\n\
+             if exist \"{rdp_new_path}\" (\r\n\
+               del \"{rdp_path}\" >nul 2>&1\r\n\
+               move /y \"{rdp_new_path}\" \"{rdp_path}\" >nul\r\n\
+             )\r\n\
+             start \"\" \"{exe_path}\"\r\n\
+             del \"%~f0\" >nul 2>&1\r\n"
+        );
+        std::fs::write(&script, bat_content)
+            .with_context(|| format!("writing update script {}", script.display()))?;
+
+        Ok(script)
+    } else {
+        // Unix: rename is atomic and works on running binaries.
+        let backup = current_exe.with_extension("bak");
+        if backup.exists() {
+            std::fs::remove_file(&backup).ok();
+        }
+        std::fs::rename(current_exe, &backup)
+            .with_context(|| format!("backing up {}", current_exe.display()))?;
+        std::fs::rename(&new_bin, current_exe)
+            .with_context(|| format!("installing new binary to {}", current_exe.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(current_exe, std::fs::Permissions::from_mode(0o755)).ok();
+        }
+
         std::fs::remove_file(&backup).ok();
+
+        Ok(current_exe.to_path_buf())
     }
-    std::fs::rename(current_exe, &backup)
-        .with_context(|| format!("backing up {}", current_exe.display()))?;
-    std::fs::rename(&new_bin, current_exe)
-        .with_context(|| format!("installing new binary to {}", current_exe.display()))?;
-
-    // Set executable permission on Unix.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(current_exe, std::fs::Permissions::from_mode(0o755)).ok();
-    }
-
-    std::fs::remove_file(&backup).ok();
-
-    Ok(current_exe.to_path_buf())
 }
 
 fn find_file_in_dir(dir: &std::path::Path, name: &str) -> Option<PathBuf> {

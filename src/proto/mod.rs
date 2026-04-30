@@ -1,3 +1,4 @@
+pub mod local;
 pub mod rdp;
 pub mod sftp;
 pub mod ssh;
