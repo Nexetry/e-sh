@@ -51,7 +51,7 @@ alongside the main application.
 - Toast notifications (info / success / warn / error) for connect, disconnect, save, delete, host-key, persistence, and session-end events
 - Persistent TOML store for connections (per-OS config dir) with transparent backward-compatible migration
 - **SSH** interactive shell:
-  - `russh` 0.55 transport, `tokio` async runtime
+  - `russh` 0.60 transport, `tokio` async runtime
   - `alacritty_terminal` 0.26 emulator rendered through a custom egui widget
   - Password, public-key, and **SSH agent** authentication (uses `$SSH_AUTH_SOCK`,
     tries each loaded identity in order until one is accepted)
@@ -205,8 +205,8 @@ VS Code "Draw.io Integration" extension.
 - **Language:** Rust (edition 2024, toolchain `1.85+`)
 - **UI:** [`egui`](https://github.com/emilk/egui) `0.34`, `eframe` `0.34`, `egui_dock` `0.19`, `egui_extras` `0.34`
 - **Async runtime:** `tokio` `1`
-- **SSH:** `russh` `0.55`
-- **SFTP:** `russh-sftp` `2.1.1`
+- **SSH:** `russh` `0.60`
+- **SFTP:** `russh-sftp` `2.1`
 - **Terminal emulator:** `alacritty_terminal` `0.26`
 - **RDP:** [`IronRDP`](https://github.com/Devolutions/IronRDP) (built-in, Rust-native) + [FreeRDP](https://www.freerdp.com/) (external fallback for GFX pipeline servers)
 - **VNC:** Pure-Rust RFB client with `des` `0.8` for VNC authentication

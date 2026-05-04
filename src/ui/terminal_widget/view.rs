@@ -13,9 +13,7 @@ pub struct TerminalView<'a> {
 impl<'a> TerminalView<'a> {
     pub fn show(mut self, ui: &mut Ui) {
         let font_id = FontId::new(13.0, FontFamily::Monospace);
-        let row_height = ui
-            .fonts_mut(|f| f.row_height(&font_id))
-            .max(14.0);
+        let row_height = ui.fonts_mut(|f| f.row_height(&font_id)).max(14.0);
         let cell_width = ui.fonts_mut(|f| f.glyph_width(&font_id, 'M')).max(7.0);
 
         let avail = ui.available_size();
@@ -58,7 +56,8 @@ impl<'a> TerminalView<'a> {
             for (col_idx, cell) in row.iter().enumerate() {
                 let x = origin.x + col_idx as f32 * cell_width;
                 let y = origin.y + row_idx as f32 * row_height;
-                let cell_rect = Rect::from_min_size(Pos2::new(x, y), Vec2::new(cell_width, row_height));
+                let cell_rect =
+                    Rect::from_min_size(Pos2::new(x, y), Vec2::new(cell_width, row_height));
                 let bg = if cell.selected {
                     selection_bg
                 } else {
@@ -71,7 +70,11 @@ impl<'a> TerminalView<'a> {
                     let fg = Color32::from_rgb(cell.fg[0], cell.fg[1], cell.fg[2]);
                     let glyph_font = FontId::new(
                         font_id.size,
-                        if cell.bold { FontFamily::Monospace } else { font_id.family.clone() },
+                        if cell.bold {
+                            FontFamily::Monospace
+                        } else {
+                            font_id.family.clone()
+                        },
                     );
                     painter.text(
                         Pos2::new(x, y),
@@ -105,10 +108,18 @@ impl<'a> TerminalView<'a> {
             if cursor_on {
                 let (cy, cx) = snapshot.cursor;
                 let cursor_rect = Rect::from_min_size(
-                    Pos2::new(origin.x + cx as f32 * cell_width, origin.y + cy as f32 * row_height),
+                    Pos2::new(
+                        origin.x + cx as f32 * cell_width,
+                        origin.y + cy as f32 * row_height,
+                    ),
                     Vec2::new(cell_width, row_height),
                 );
-                painter.rect_stroke(cursor_rect, 0.0, Stroke::new(1.5, Color32::from_rgb(0xea, 0xea, 0xea)), egui::StrokeKind::Inside);
+                painter.rect_stroke(
+                    cursor_rect,
+                    0.0,
+                    Stroke::new(1.5, Color32::from_rgb(0xea, 0xea, 0xea)),
+                    egui::StrokeKind::Inside,
+                );
             }
         }
 
@@ -131,7 +142,11 @@ impl<'a> TerminalView<'a> {
                 let y = origin.y + viewport_row as f32 * row_height;
                 let x0 = origin.x + start.column.0 as f32 * cell_width;
                 let x1 = origin.x + (end.column.0 + 1) as f32 * cell_width;
-                let color = if Some(i) == current_idx { current_bg } else { match_bg };
+                let color = if Some(i) == current_idx {
+                    current_bg
+                } else {
+                    match_bg
+                };
                 painter.rect_filled(
                     Rect::from_min_max(Pos2::new(x0, y), Pos2::new(x1, y + row_height)),
                     0.0,
@@ -170,14 +185,18 @@ impl<'a> TerminalView<'a> {
             response.request_focus();
         }
 
-        // Auto-focus the terminal when the tab first appears (e.g. after
-        // switching to this tab) so keystrokes reach the remote shell
-        // immediately.  We only request focus on the *first* frame the
-        // terminal is rendered to avoid stealing focus from other tabs
-        // (like Settings) on subsequent frames.
+        // Auto-focus the terminal whenever this tab becomes visible (first
+        // appearance or after switching back to it) so keystrokes reach the
+        // remote shell immediately.  We track the last frame this terminal
+        // was rendered: if it wasn't rendered in the immediately preceding
+        // frame the tab was hidden (switched away or first appearance) and
+        // we request focus.  This avoids stealing focus from other widgets
+        // (like Settings) while both are simultaneously visible in a split.
         let appeared_key = egui::Id::new(("term_appeared", self.emulator as *const _ as usize));
-        let was_visible_last_frame = ui.data(|d| d.get_temp::<bool>(appeared_key).unwrap_or(false));
-        ui.data_mut(|d| d.insert_temp(appeared_key, true));
+        let frame_nr = ui.ctx().cumulative_frame_nr();
+        let last_rendered_frame = ui.data(|d| d.get_temp::<u64>(appeared_key).unwrap_or(0));
+        ui.data_mut(|d| d.insert_temp(appeared_key, frame_nr));
+        let was_visible_last_frame = last_rendered_frame == frame_nr.saturating_sub(1);
         if !was_visible_last_frame && !response.has_focus() && !self.emulator.find.open {
             response.request_focus();
         }
@@ -202,9 +221,9 @@ impl<'a> TerminalView<'a> {
         // press position we guarantee the cell the user originally clicked
         // is included in the selection.
         let press_key = egui::Id::new(("term_press_pos", self.emulator as *const _ as usize));
-        let primary_pressed = ui.ctx().input(|i| {
-            i.pointer.button_pressed(egui::PointerButton::Primary)
-        });
+        let primary_pressed = ui
+            .ctx()
+            .input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         if primary_pressed {
             if let Some(pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
                 if response.rect.contains(pos) {
@@ -233,7 +252,8 @@ impl<'a> TerminalView<'a> {
 
         let single_click = response.clicked() && !response.dragged();
         if single_click {
-            let dblclick_key = egui::Id::new(("term_last_click", self.emulator as *const _ as usize));
+            let dblclick_key =
+                egui::Id::new(("term_last_click", self.emulator as *const _ as usize));
             let now = ui.ctx().input(|i| i.time);
             let anchor_pos: Option<Pos2> = ui.data(|d| d.get_temp(press_key));
             let pos = anchor_pos.or(response.interact_pointer_pos());
@@ -275,7 +295,9 @@ impl<'a> TerminalView<'a> {
         }
 
         if response.has_focus() {
-            let (events, mods) = ui.ctx().input(|input| (input.events.clone(), input.modifiers));
+            let (events, mods) = ui
+                .ctx()
+                .input(|input| (input.events.clone(), input.modifiers));
             let mut buf: Vec<u8> = Vec::new();
 
             let copy_combo = (mods.command && !mods.shift && !mods.alt)
@@ -299,7 +321,12 @@ impl<'a> TerminalView<'a> {
                     egui::Event::Paste(text) => {
                         buf.extend_from_slice(text.as_bytes());
                     }
-                    egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => {
                         if copy_combo && matches!(key, Key::C) {
                             if let Some(text) = self.emulator.selection_text() {
                                 if !text.is_empty() {
@@ -376,10 +403,12 @@ impl<'a> TerminalView<'a> {
                                 edit_focused = true;
                                 if let Some(mut state) = TextEdit::load_state(ui.ctx(), edit_id) {
                                     let end = self.emulator.find.query.len();
-                                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
-                                        egui::text::CCursor::new(0),
-                                        egui::text::CCursor::new(end),
-                                    )));
+                                    state.cursor.set_char_range(Some(
+                                        egui::text::CCursorRange::two(
+                                            egui::text::CCursor::new(0),
+                                            egui::text::CCursor::new(end),
+                                        ),
+                                    ));
                                     state.store(ui.ctx(), edit_id);
                                 }
                             }
@@ -388,7 +417,11 @@ impl<'a> TerminalView<'a> {
                                 self.emulator.find_scroll_to_current();
                             }
                             if resp.has_focus() && enter {
-                                if shift_held { goto_prev = true; } else { goto_next = true; }
+                                if shift_held {
+                                    goto_prev = true;
+                                } else {
+                                    goto_next = true;
+                                }
                             }
 
                             let total = self.emulator.find.matches.len();
@@ -404,10 +437,18 @@ impl<'a> TerminalView<'a> {
                                     .color(Color32::from_rgb(0xa0, 0xa0, 0xa0)),
                             );
 
-                            if ui.small_button("Prev").on_hover_text("Previous match (Shift+Enter)").clicked() {
+                            if ui
+                                .small_button("Prev")
+                                .on_hover_text("Previous match (Shift+Enter)")
+                                .clicked()
+                            {
                                 goto_prev = true;
                             }
-                            if ui.small_button("Next").on_hover_text("Next match (Enter)").clicked() {
+                            if ui
+                                .small_button("Next")
+                                .on_hover_text("Next match (Enter)")
+                                .clicked()
+                            {
                                 goto_next = true;
                             }
                             if ui.small_button("x").on_hover_text("Close (Esc)").clicked() {
@@ -419,7 +460,8 @@ impl<'a> TerminalView<'a> {
 
         if edit_focused {
             let g_sc_next = egui::KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
-            let g_sc_prev = egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::G);
+            let g_sc_prev =
+                egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::G);
             if ui.ctx().input_mut(|i| i.consume_shortcut(&g_sc_prev)) {
                 goto_prev = true;
             } else if ui.ctx().input_mut(|i| i.consume_shortcut(&g_sc_next)) {
@@ -483,11 +525,32 @@ fn key_to_bytes(key: Key, mods: Modifiers) -> Option<Vec<u8>> {
 fn ctrl_byte(key: Key) -> Option<u8> {
     use Key::*;
     let c = match key {
-        A => b'a', B => b'b', C => b'c', D => b'd', E => b'e', F => b'f',
-        G => b'g', H => b'h', I => b'i', J => b'j', K => b'k', L => b'l',
-        M => b'm', N => b'n', O => b'o', P => b'p', Q => b'q', R => b'r',
-        S => b's', T => b't', U => b'u', V => b'v', W => b'w', X => b'x',
-        Y => b'y', Z => b'z',
+        A => b'a',
+        B => b'b',
+        C => b'c',
+        D => b'd',
+        E => b'e',
+        F => b'f',
+        G => b'g',
+        H => b'h',
+        I => b'i',
+        J => b'j',
+        K => b'k',
+        L => b'l',
+        M => b'm',
+        N => b'n',
+        O => b'o',
+        P => b'p',
+        Q => b'q',
+        R => b'r',
+        S => b's',
+        T => b't',
+        U => b'u',
+        V => b'v',
+        W => b'w',
+        X => b'x',
+        Y => b'y',
+        Z => b'z',
         OpenBracket => b'[',
         CloseBracket => b']',
         Backslash => b'\\',
