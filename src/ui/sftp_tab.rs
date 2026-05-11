@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::SystemTime;
 
 use egui::{Color32, RichText, ScrollArea, Ui};
@@ -36,6 +37,8 @@ pub struct SftpTab {
     pub remote_anchor: Option<String>,
 
     pub local_cwd: PathBuf,
+    /// User home used for default local cwd and `~/` path display (Unix).
+    pub local_home: Option<PathBuf>,
     pub local_selected: HashSet<PathBuf>,
     pub local_anchor: Option<PathBuf>,
 
@@ -86,6 +89,117 @@ pub enum SortDir {
     Desc,
 }
 
+fn user_home_dir() -> Option<PathBuf> {
+    if cfg!(windows) {
+        std::env::var_os("USERPROFILE").map(PathBuf::from)
+    } else {
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
+}
+
+/// Show `~/…` when `cwd` is under `home` (Unix). Windows: always full path.
+fn format_local_cwd_display(cwd: &Path, home: Option<&Path>) -> String {
+    #[cfg(unix)]
+    if let Some(h) = home {
+        if cwd == h {
+            return "~/".to_string();
+        }
+        if cwd.starts_with(h) {
+            let tail = cwd.strip_prefix(h).unwrap();
+            let t = tail.to_string_lossy();
+            let t = t.trim_start_matches('/');
+            if t.is_empty() {
+                return "~/".to_string();
+            }
+            return format!("~/{t}");
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = home;
+    cwd.display().to_string()
+}
+
+fn sync_local_path_buffer(tab: &mut SftpTab) {
+    tab.local_path_buffer = format_local_cwd_display(&tab.local_cwd, tab.local_home.as_deref());
+}
+
+fn expand_local_path_input(raw: &str, home: Option<&Path>) -> PathBuf {
+    let t = raw.trim();
+    #[cfg(unix)]
+    if let Some(h) = home {
+        if t == "~" || t == "~/" {
+            return h.to_path_buf();
+        }
+        if let Some(rest) = t.strip_prefix("~/") {
+            return h.join(rest);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = home;
+    PathBuf::from(t)
+}
+
+fn reveal_in_system_file_manager(path: &Path, tab: &mut SftpTab) {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let res = try_reveal_in_system_file_manager(&path);
+    match res {
+        Ok(()) => {
+            tab.last_message = Some(format!("Revealed {}", path.display()));
+        }
+        Err(e) => {
+            tab.last_message = Some(format!("Could not reveal in file manager: {e}"));
+        }
+    }
+}
+
+fn try_reveal_in_system_file_manager(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        let p = path.display().to_string();
+        Command::new("explorer")
+            .arg(format!("/select,{p}"))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        if path.is_dir() {
+            Command::new("xdg-open")
+                .arg(path)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else if let Some(parent) = path.parent() {
+            Command::new("xdg-open")
+                .arg(parent)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            return Err("path has no parent".into());
+        }
+        Ok(())
+    }
+}
+
+fn reveal_menu_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Reveal in Finder"
+    } else if cfg!(windows) {
+        "Show in Explorer"
+    } else {
+        "Open in file manager"
+    }
+}
+
 impl SftpTab {
     pub fn new(
         id: Uuid,
@@ -94,8 +208,12 @@ impl SftpTab {
         connection_label: String,
         handle: SftpHandle,
     ) -> Self {
-        let local_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-        let local_path_buffer = local_cwd.display().to_string();
+        let local_home = user_home_dir();
+        let local_cwd = local_home
+            .clone()
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" }));
+        let local_path_buffer = format_local_cwd_display(&local_cwd, local_home.as_deref());
         Self {
             id,
             source_connection,
@@ -111,6 +229,7 @@ impl SftpTab {
             remote_selected: HashSet::new(),
             remote_anchor: None,
             local_cwd,
+            local_home,
             local_selected: HashSet::new(),
             local_anchor: None,
             transfers: HashMap::new(),
@@ -432,7 +551,7 @@ fn render_local_pane(ui: &mut Ui, tab: &mut SftpTab) {
                                         tab.local_selected.clear();
                                         tab.local_anchor = None;
                                         tab.local_path_dirty = false;
-                                        tab.local_path_buffer = tab.local_cwd.display().to_string();
+                                        sync_local_path_buffer(tab);
                                     }
                                     local_entry_context_menu(&cell_resp, tab, entry);
                                 });
@@ -483,13 +602,13 @@ fn render_local_breadcrumb(ui: &mut Ui, tab: &mut SftpTab) {
         tab.local_selected.clear();
         tab.local_anchor = None;
         tab.local_path_dirty = false;
-        tab.local_path_buffer = tab.local_cwd.display().to_string();
+        sync_local_path_buffer(tab);
     }
 }
 
 fn render_local_path_field(ui: &mut Ui, tab: &mut SftpTab) {
     if !tab.local_path_dirty {
-        let want = tab.local_cwd.display().to_string();
+        let want = format_local_cwd_display(&tab.local_cwd, tab.local_home.as_deref());
         if tab.local_path_buffer != want {
             tab.local_path_buffer = want;
         }
@@ -503,7 +622,7 @@ fn render_local_path_field(ui: &mut Ui, tab: &mut SftpTab) {
         tab.local_path_dirty = true;
     }
     if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-        let p = PathBuf::from(tab.local_path_buffer.trim());
+        let p = expand_local_path_input(&tab.local_path_buffer, tab.local_home.as_deref());
         if p.is_dir() {
             tab.local_cwd = p;
             tab.local_selected.clear();
@@ -512,7 +631,7 @@ fn render_local_path_field(ui: &mut Ui, tab: &mut SftpTab) {
             tab.last_message = Some(format!("error: not a directory: {}", tab.local_path_buffer));
         }
         tab.local_path_dirty = false;
-        tab.local_path_buffer = tab.local_cwd.display().to_string();
+        sync_local_path_buffer(tab);
     }
 }
 
@@ -531,7 +650,13 @@ fn local_entry_context_menu(resp: &egui::Response, tab: &mut SftpTab, entry: &Lo
                 tab.local_selected.clear();
                 tab.local_anchor = None;
                 tab.local_path_dirty = false;
-                tab.local_path_buffer = tab.local_cwd.display().to_string();
+                sync_local_path_buffer(tab);
+                ui.close();
+            }
+        }
+        if n == 1 {
+            if ui.button(reveal_menu_label()).clicked() {
+                reveal_in_system_file_manager(&selection[0], tab);
                 ui.close();
             }
         }
@@ -747,11 +872,20 @@ fn remote_entry_context_menu(resp: &egui::Response, tab: &mut SftpTab, entry: &S
             }
         }
         let dl_label = if n > 1 {
-            format!("Download {n} items << {}", tab.local_cwd.display())
+            format!(
+                "Download {n} items << {}",
+                format_local_cwd_display(&tab.local_cwd, tab.local_home.as_deref())
+            )
         } else if entry.is_dir {
-            format!("Download folder << {}", tab.local_cwd.display())
+            format!(
+                "Download folder << {}",
+                format_local_cwd_display(&tab.local_cwd, tab.local_home.as_deref())
+            )
         } else {
-            format!("Download << {}", tab.local_cwd.display())
+            format!(
+                "Download << {}",
+                format_local_cwd_display(&tab.local_cwd, tab.local_home.as_deref())
+            )
         };
         if ui.button(dl_label).clicked() {
             for name in &selection {
@@ -825,7 +959,7 @@ fn pane_empty_context_menu(resp: &egui::Response, tab: &mut SftpTab, pane: Pane)
                         tab.local_selected.clear();
                         tab.local_anchor = None;
                         tab.local_path_dirty = false;
-                        tab.local_path_buffer = tab.local_cwd.display().to_string();
+                        sync_local_path_buffer(tab);
                     }
                 }
                 Pane::Remote => {

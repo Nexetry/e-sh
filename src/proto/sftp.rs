@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
@@ -174,24 +175,30 @@ async fn run_sftp_session(
                     });
                 }
             },
-            SftpCommand::Rmdir { path } => match sftp.remove_dir(&path).await {
-                Ok(_) => {
-                    if let Some(r) = recorder.as_ref() {
-                        r.sftp_event("rmdir", RecSftpResult::Ok, json!({"path": path}));
+            SftpCommand::Rmdir { path } => {
+                match remove_remote_dir_recursive(&sftp, &path).await {
+                    Ok(_) => {
+                        if let Some(r) = recorder.as_ref() {
+                            r.sftp_event("rmdir", RecSftpResult::Ok, json!({"path": path}));
+                        }
+                        let _ = events.send(SftpEvent::OperationOk {
+                            message: format!("rmdir {path}"),
+                        });
                     }
-                    let _ = events.send(SftpEvent::OperationOk {
-                        message: format!("rmdir {path}"),
-                    });
-                }
-                Err(e) => {
-                    if let Some(r) = recorder.as_ref() {
-                        r.sftp_event("rmdir", RecSftpResult::Error, json!({"path": path, "error": e.to_string()}));
+                    Err(e) => {
+                        if let Some(r) = recorder.as_ref() {
+                            r.sftp_event(
+                                "rmdir",
+                                RecSftpResult::Error,
+                                json!({"path": path, "error": e.to_string()}),
+                            );
+                        }
+                        let _ = events.send(SftpEvent::OperationError {
+                            message: format!("rmdir {path}: {e}"),
+                        });
                     }
-                    let _ = events.send(SftpEvent::OperationError {
-                        message: format!("rmdir {path}: {e}"),
-                    });
                 }
-            },
+            }
             SftpCommand::Remove { path } => match sftp.remove_file(&path).await {
                 Ok(_) => {
                     if let Some(r) = recorder.as_ref() {
@@ -341,6 +348,48 @@ async fn run_sftp_session(
 
     let _ = sftp.close().await;
     Ok(())
+}
+
+/// Delete a remote directory and all contents (SFTP `remove_dir` is empty-directories only).
+fn remove_remote_dir_recursive<'a>(
+    sftp: &'a SftpSession,
+    path: &'a str,
+) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        let read_dir = sftp
+            .read_dir(path)
+            .await
+            .with_context(|| format!("read_dir {path}"))?;
+        let children: Vec<_> = read_dir.collect();
+        for e in children {
+            let name = e.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            let child_path = if path.ends_with('/') {
+                format!("{path}{name}")
+            } else {
+                format!("{path}/{name}")
+            };
+            let meta = e.metadata();
+            let ft = meta.file_type();
+            if ft.is_symlink() {
+                sftp.remove_file(&child_path)
+                    .await
+                    .with_context(|| format!("remove_file (symlink) {child_path}"))?;
+            } else if ft.is_dir() {
+                remove_remote_dir_recursive(sftp, &child_path).await?;
+            } else {
+                sftp.remove_file(&child_path)
+                    .await
+                    .with_context(|| format!("remove_file {child_path}"))?;
+            }
+        }
+        sftp.remove_dir(path)
+            .await
+            .with_context(|| format!("remove_dir {path}"))?;
+        Ok(())
+    })
 }
 
 async fn list_and_emit(

@@ -5,8 +5,8 @@ use egui::{
 use uuid::Uuid;
 
 use crate::core::connection::{
-    AuthMethod, Connection, ConnectionStore, FreeRdpResizeMode, Protocol, RdpBackend, Tunnel,
-    TunnelKind,
+    AuthMethod, Connection, ConnectionStore, FreeRdpResizeMode, Protocol, RdpBackend,
+    RdpSecurityMode, Tunnel, TunnelKind,
 };
 use crate::ui::password_field::MaskedBuffer;
 
@@ -48,6 +48,7 @@ enum Section {
     Tunnels,
     Session,
     Recording,
+    Security,
     Display,
 }
 
@@ -60,6 +61,7 @@ impl Section {
             Section::Tunnels => "Tunnels",
             Section::Session => "Session",
             Section::Recording => "Recording",
+            Section::Security => "Security",
             Section::Display => "Display",
         }
     }
@@ -212,6 +214,7 @@ impl EditConnectionDialog {
                     if matches!(self.draft.protocol, Protocol::Rdp) {
                         ui.add_space(12.0);
                         self.sidebar_group(ui, "Advanced");
+                        self.sidebar_item(ui, Section::Security);
                         self.sidebar_item(ui, Section::Display);
                     } else if matches!(self.draft.protocol, Protocol::Vnc) {
                         // VNC has no extra sidebar sections beyond Connection + Auth
@@ -286,6 +289,11 @@ impl EditConnectionDialog {
         {
             self.section = Section::Connection;
         }
+        if matches!(self.section, Section::Security)
+            && !matches!(self.draft.protocol, Protocol::Rdp)
+        {
+            self.section = Section::Connection;
+        }
         if matches!(self.draft.protocol, Protocol::Rdp | Protocol::Vnc)
             && matches!(
                 self.section,
@@ -301,6 +309,7 @@ impl EditConnectionDialog {
             Section::Tunnels => self.tunnels_pane(ui),
             Section::Session => self.session_pane(ui),
             Section::Recording => self.recording_pane(ui),
+            Section::Security => self.security_pane(ui),
             Section::Display => self.display_pane(ui),
         }
     }
@@ -546,6 +555,44 @@ impl EditConnectionDialog {
         });
     }
 
+    fn security_pane(&mut self, ui: &mut egui::Ui) {
+        self.pane_header(
+            ui,
+            "Security",
+            "How the RDP session negotiates TLS, NLA (CredSSP), or legacy Standard RDP security.",
+        );
+
+        form_row(ui, "Security mode", |ui| {
+            ComboBox::from_id_salt("rdp_security_mode")
+                .selected_text(self.draft.rdp_security_mode.label())
+                .width(260.0)
+                .show_ui(ui, |ui| {
+                    for m in RdpSecurityMode::ALL {
+                        ui.selectable_value(&mut self.draft.rdp_security_mode, m, m.label());
+                    }
+                });
+            ui.weak("ℹ").on_hover_text(
+                "Negotiate (recommended): TLS / NLA when the server supports it.\n\
+                 \n\
+                 If you see: client advertised SSL | HYBRID … but server selected STANDARD_RDP_SECURITY:\n\
+                 the host uses legacy RDP security only. Use RDP Backend “Auto” or “FreeRDP” (Auto retries with FreeRDP).\n\
+                 “Standard RDP security (legacy)” applies to the FreeRDP client; the built-in IronRDP client cannot use it.\n\
+                 \n\
+                 If you see: standard RDP security is not supported — you forced legacy security while the server\n\
+                 requires TLS/NLA; switch back to Negotiate, NLA, or TLS.",
+            );
+        });
+
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(
+                "RDP backend (built-in vs FreeRDP) is configured under Display — it affects which client applies this security mode.",
+            )
+            .small()
+            .weak(),
+        );
+    }
+
     fn display_pane(&mut self, ui: &mut egui::Ui) {
         self.pane_header(
             ui,
@@ -582,7 +629,8 @@ impl EditConnectionDialog {
                     RichText::new(
                         "Uses the built-in IronRDP client. Works with Windows RDP and xrdp. \
                          Does not support servers that require the Graphics Pipeline \
-                         (e.g. GNOME Remote Desktop)."
+                         (e.g. GNOME Remote Desktop). Does not support hosts that only allow \
+                         legacy Standard RDP security — use Auto or FreeRDP for those."
                     ).weak().italics(),
                 );
             }

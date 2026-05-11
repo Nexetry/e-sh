@@ -2,11 +2,29 @@ use egui::{
     CollapsingHeader, FontId, Frame, Id, LayerId, Order, PointerButton, ScrollArea, Sense, Stroke,
     Ui, UiBuilder,
 };
+use egui::containers::scroll_area::ScrollSource;
 use uuid::Uuid;
 
 use crate::core::connection::{ConnectionStore, Protocol};
 
 const DRAG_THRESHOLD: f32 = 4.0;
+
+/// Temp memory: which connection initiated the current primary press (for drag threshold).
+#[derive(Clone, Copy)]
+struct ConnPressStart {
+    conn_id: Uuid,
+    origin: egui::Pos2,
+}
+
+#[inline]
+fn mem_dragging() -> Id {
+    Id::new("conn-dragging")
+}
+
+#[inline]
+fn mem_press_start() -> Id {
+    Id::new("conn_press_start")
+}
 
 pub struct ConnectionTree<'a> {
     pub store: &'a ConnectionStore,
@@ -59,7 +77,16 @@ impl<'a> ConnectionTree<'a> {
             }
             ui.separator();
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                ScrollArea::vertical().show(ui, |ui| {
+                // Disable drag-to-scroll on the contents; otherwise the ScrollArea
+                // captures primary drags and connection rows never see a drag gesture
+                // (reordering breaks). Wheel + scrollbar scrolling stay enabled.
+                ScrollArea::vertical()
+                    .id_salt("e_sh_connection_tree_scroll")
+                    .scroll_source(ScrollSource {
+                        drag: false,
+                        ..Default::default()
+                    })
+                    .show(ui, |ui| {
                     let mut group_order: Vec<String> = Vec::new();
                     let mut groups: std::collections::HashMap<String, Vec<&_>> =
                         std::collections::HashMap::new();
@@ -83,6 +110,15 @@ impl<'a> ConnectionTree<'a> {
                                 draw_group(ui, &group_clone, &items, &mut action);
                             });
                     }
+                    // Clear drag state once after every group has had a chance to handle
+                    // drops. Per-group cleanup used to clear `conn-dragging` too early when the
+                    // pointer was released over a later group (reorder never applied).
+                    if ui.input(|i| i.pointer.any_released()) {
+                        ui.ctx().memory_mut(|m| {
+                            m.data.remove::<Uuid>(mem_dragging());
+                            m.data.remove::<ConnPressStart>(mem_press_start());
+                        });
+                    }
                 });
             });
         });
@@ -96,10 +132,11 @@ fn draw_group(
     items: &[&crate::core::connection::Connection],
     action: &mut TreeAction,
 ) {
-    let dragged_payload: Option<Uuid> = ui.ctx().memory(|m| m.data.get_temp(Id::new("conn-dragging")));
+    let dragged_payload: Option<Uuid> = ui.ctx().memory(|m| m.data.get_temp(mem_dragging()));
+    let connection_drag_active = dragged_payload.is_some();
 
     for c in items {
-        let drop_response = drop_zone_thin(ui);
+        let drop_response = drop_zone_thin(ui, connection_drag_active);
         if let Some(dragged) = dragged_payload {
             if dragged != c.id
                 && drop_response.contains_pointer
@@ -116,7 +153,7 @@ fn draw_group(
         draw_row(ui, c, action, dragged_payload);
     }
 
-    let tail = drop_zone_thin(ui);
+    let tail = drop_zone_thin(ui, connection_drag_active);
     if let Some(dragged) = dragged_payload {
         if tail.contains_pointer && ui.input(|i| i.pointer.any_released()) {
             let already_tail = items.last().map(|c| c.id) == Some(dragged);
@@ -130,24 +167,17 @@ fn draw_group(
         }
     }
 
-    if dragged_payload.is_some() && ui.input(|i| i.pointer.any_released()) {
-        ui.ctx().memory_mut(|m| {
-            m.data.remove::<Uuid>(Id::new("conn-dragging"));
-            m.data.remove::<egui::Pos2>(Id::new("conn-drag-press"));
-        });
-    }
 }
 
 struct DropZoneResponse {
     contains_pointer: bool,
 }
 
-fn drop_zone_thin(ui: &mut Ui) -> DropZoneResponse {
+fn drop_zone_thin(ui: &mut Ui, connection_drag_active: bool) -> DropZoneResponse {
     let height = 4.0;
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::hover());
-    let dragging_anything = ui.ctx().dragged_id().is_some();
-    if response.contains_pointer() && dragging_anything {
+    if response.contains_pointer() && connection_drag_active {
         let painter = ui.painter_at(rect);
         let y = rect.center().y;
         let accent = ui.visuals().selection.bg_fill;
@@ -209,23 +239,38 @@ fn draw_row(
     }
 
     let primary_down = ui.input(|i| i.pointer.button_down(PointerButton::Primary));
-    let press_key = Id::new("conn-drag-press");
-    let dragging_key = Id::new("conn-dragging");
 
-    if interact.drag_started_by(PointerButton::Primary) {
-        if let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
-            ui.ctx().memory_mut(|m| m.data.insert_temp(press_key, pos));
-        }
+    // Remember where a press began (which row) — do not rely on `drag_started_by` +
+    // `is_pointer_button_down_on` only, because the pointer can leave the row rect
+    // while still dragging before we arm `conn-dragging`.
+    if ui.input(|i| i.pointer.primary_pressed()) && interact.contains_pointer() {
+        let origin = ui
+            .input(|i| i.pointer.interact_pos())
+            .unwrap_or_else(|| interact.rect.center());
+        ui.ctx().memory_mut(|m| {
+            m.data.insert_temp(
+                mem_press_start(),
+                ConnPressStart {
+                    conn_id: c.id,
+                    origin,
+                },
+            );
+        });
     }
 
     if dragged_payload.is_none() && primary_down {
-        let press_origin: Option<egui::Pos2> = ui.ctx().memory(|m| m.data.get_temp(press_key));
-        if let (Some(origin), Some(current)) = (press_origin, ui.input(|i| i.pointer.interact_pos()))
-            && interact.is_pointer_button_down_on()
-            && (current - origin).length() >= DRAG_THRESHOLD
+        if let Some(start) = ui.ctx().memory(|m| m.data.get_temp::<ConnPressStart>(mem_press_start()))
         {
-            ui.ctx()
-                .memory_mut(|m| m.data.insert_temp(dragging_key, c.id));
+            if start.conn_id == c.id {
+                let cur = ui
+                    .input(|i| i.pointer.interact_pos())
+                    .unwrap_or(start.origin);
+                if (cur - start.origin).length() >= DRAG_THRESHOLD {
+                    ui.ctx().memory_mut(|m| {
+                        m.data.insert_temp(mem_dragging(), c.id);
+                    });
+                }
+            }
         }
     }
 

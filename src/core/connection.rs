@@ -65,6 +65,46 @@ impl FreeRdpResizeMode {
     ];
 }
 
+/// RDP security mode preference.
+///
+/// - `negotiate` (default): allow TLS and NLA (CredSSP) and let the server pick.
+/// - `nla`: require NLA (CredSSP).
+/// - `tls`: require TLS (SSL) without NLA.
+/// - `rdp`: force legacy "Standard RDP security" (no TLS/NLA). Use only when
+///   the server is configured to select `STANDARD_RDP_SECURITY`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RdpSecurityMode {
+    Negotiate,
+    Nla,
+    Tls,
+    Rdp,
+}
+
+impl Default for RdpSecurityMode {
+    fn default() -> Self {
+        RdpSecurityMode::Negotiate
+    }
+}
+
+impl RdpSecurityMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            RdpSecurityMode::Negotiate => "Negotiate (recommended)",
+            RdpSecurityMode::Nla => "NLA (CredSSP)",
+            RdpSecurityMode::Tls => "TLS (SSL)",
+            RdpSecurityMode::Rdp => "Standard RDP security (legacy)",
+        }
+    }
+
+    pub const ALL: [RdpSecurityMode; 4] = [
+        RdpSecurityMode::Negotiate,
+        RdpSecurityMode::Nla,
+        RdpSecurityMode::Tls,
+        RdpSecurityMode::Rdp,
+    ];
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
@@ -201,6 +241,8 @@ pub struct Connection {
     pub rdp_backend: RdpBackend,
     #[serde(default)]
     pub freerdp_resize_mode: FreeRdpResizeMode,
+    #[serde(default)]
+    pub rdp_security_mode: RdpSecurityMode,
     #[serde(default = "default_rdp_width")]
     pub rdp_width: u16,
     #[serde(default = "default_rdp_height")]
@@ -244,6 +286,8 @@ struct ConnectionRaw {
     rdp_backend: RdpBackend,
     #[serde(default)]
     freerdp_resize_mode: FreeRdpResizeMode,
+    #[serde(default)]
+    rdp_security_mode: RdpSecurityMode,
     #[serde(default = "default_rdp_width")]
     rdp_width: u16,
     #[serde(default = "default_rdp_height")]
@@ -278,6 +322,7 @@ impl From<ConnectionRaw> for Connection {
             after_close_script: raw.after_close_script,
             rdp_backend: raw.rdp_backend,
             freerdp_resize_mode: raw.freerdp_resize_mode,
+            rdp_security_mode: raw.rdp_security_mode,
             rdp_width: raw.rdp_width,
             rdp_height: raw.rdp_height,
         }
@@ -306,6 +351,7 @@ impl Connection {
             after_close_script: None,
             rdp_backend: RdpBackend::default(),
             freerdp_resize_mode: FreeRdpResizeMode::default(),
+            rdp_security_mode: RdpSecurityMode::default(),
             rdp_width: default_rdp_width(),
             rdp_height: default_rdp_height(),
         }

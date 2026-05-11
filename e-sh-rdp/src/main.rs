@@ -19,6 +19,9 @@ struct Params {
     /// `"dynamic_resolution"` (default), `"smart_sizing"`, or `"static"`.
     #[serde(default = "default_resize_mode")]
     freerdp_resize_mode: String,
+    /// `"negotiate"` (default), `"nla"`, `"tls"`, or `"rdp"` (legacy).
+    #[serde(default = "default_security_mode")]
+    rdp_security_mode: String,
 }
 
 fn default_backend() -> String {
@@ -27,6 +30,10 @@ fn default_backend() -> String {
 
 fn default_resize_mode() -> String {
     "dynamic_resolution".into()
+}
+
+fn default_security_mode() -> String {
+    "negotiate".into()
 }
 
 const MSG_CONNECTED: u8 = 1;
@@ -89,7 +96,7 @@ async fn run() -> Result<()> {
             r
         }
         _ => {
-            // "auto": try IronRDP first, fall back to FreeRDP on grd-style disconnect
+            // "auto": try IronRDP first, fall back to FreeRDP when IronRDP cannot satisfy the server.
             match session(&p, &mut out).await {
                 Ok(()) => {
                     let _ = write_msg(&mut out, MSG_CLOSED, b"session ended");
@@ -103,6 +110,19 @@ async fn run() -> Result<()> {
                              retrying with FreeRDP: {msg}"
                         );
                         let r = freerdp_session(&p, &mut out).await;
+                        match &r {
+                            Ok(()) => { let _ = write_msg(&mut out, MSG_CLOSED, b"session ended"); }
+                            Err(e2) => { let _ = write_msg(&mut out, MSG_CLOSED, format!("{e2:#}").as_bytes()); }
+                        }
+                        r
+                    } else if is_standard_rdp_only_server(&msg) {
+                        eprintln!(
+                            "[e-sh-rdp] IronRDP cannot use Standard RDP security (server selected it); \
+                             retrying with FreeRDP /sec:rdp: {msg}"
+                        );
+                        let mut p2 = p.clone();
+                        p2.rdp_security_mode = "rdp".into();
+                        let r = freerdp_session(&p2, &mut out).await;
                         match &r {
                             Ok(()) => { let _ = write_msg(&mut out, MSG_CLOSED, b"session ended"); }
                             Err(e2) => { let _ = write_msg(&mut out, MSG_CLOSED, format!("{e2:#}").as_bytes()); }
@@ -132,12 +152,27 @@ fn is_gfx_disconnect(msg: &str) -> bool {
         || (m.contains("connect_finalize") && m.contains("consumed"))
 }
 
+/// IronRDP only offers TLS / CredSSP; it cannot complete initiation when the
+/// server insists on legacy Standard RDP security (empty protocol flags).
+fn is_standard_rdp_only_server(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    m.contains("standard_rdp_security")
+        && (m.contains("client advertised") || m.contains("initiation"))
+}
+
 async fn session(p: &Params, out: &mut impl Write) -> Result<()> {
     use ironrdp::connector::*;
     use ironrdp::graphics::image_processing::PixelFormat;
     use ironrdp::session::{ActiveStage, ActiveStageOutput, image::DecodedImage};
     use ironrdp_tokio::*;
     use tokio::net::TcpStream;
+
+    if p.rdp_security_mode == "rdp" {
+        anyhow::bail!(
+            "IronRDP does not support Standard RDP security (legacy). \
+             Choose RDP Backend “FreeRDP” or “Auto” for this server."
+        );
+    }
 
     let addr = format!("{}:{}", p.host, p.port);
     let sock: SocketAddr = tokio::net::lookup_host(&addr)
@@ -151,14 +186,15 @@ async fn session(p: &Params, out: &mut impl Write) -> Result<()> {
             height: p.height,
         },
         desktop_scale_factor: 0,
-        // Offer both SSL (TLS-only) and HYBRID/HYBRID_EX (CredSSP/NLA).
+        // Offer SSL (TLS) and/or HYBRID/HYBRID_EX (CredSSP/NLA) depending on the
+        // configured security mode.
         // Some servers (e.g. xrdp configured with security_layer=negotiate or
         // hybrid, Windows with "Require NLA") refuse SSL-only and respond with
         // FailureCode(5) SSL_NOT_ALLOWED_BY_SERVER. CredSSP uses in-process
         // NTLM for username/password credentials and does not require a
         // working NetworkClient.
-        enable_tls: true,
-        enable_credssp: true,
+        enable_tls: matches!(p.rdp_security_mode.as_str(), "negotiate" | "tls" | "nla"),
+        enable_credssp: matches!(p.rdp_security_mode.as_str(), "negotiate" | "nla"),
         credentials: Credentials::UsernamePassword {
             username: p.username.clone(),
             password: p.password.clone().into(),
@@ -434,7 +470,19 @@ fn build_freerdp_args(p: &Params, is_v3: bool) -> Vec<String> {
     }
 
     // NLA (CredSSP) — gnome-remote-desktop requires it
-    args.push("/sec:nla".into());
+    match p.rdp_security_mode.as_str() {
+        // Force legacy RDP security (no TLS/NLA). Fixes servers that select
+        // STANDARD_RDP_SECURITY.
+        "rdp" => args.push("/sec:rdp".into()),
+        // Force TLS (SSL) without NLA.
+        "tls" => args.push("/sec:tls".into()),
+        // Require NLA (CredSSP).
+        "nla" => args.push("/sec:nla".into()),
+        // Negotiate (default): let FreeRDP pick. Still prefer NLA since many
+        // modern servers require it, but do not hard-fail if the server falls
+        // back.
+        _ => args.push("/sec:nla".into()),
+    }
 
     // Disable audio to reduce complexity
     args.push("/audio-mode:none".into());

@@ -144,6 +144,12 @@ fn run_rdp_helper(
             crate::core::connection::FreeRdpResizeMode::SmartSizing => "smart_sizing",
             crate::core::connection::FreeRdpResizeMode::Static => "static",
         },
+        "rdp_security_mode": match conn.rdp_security_mode {
+            crate::core::connection::RdpSecurityMode::Negotiate => "negotiate",
+            crate::core::connection::RdpSecurityMode::Nla => "nla",
+            crate::core::connection::RdpSecurityMode::Tls => "tls",
+            crate::core::connection::RdpSecurityMode::Rdp => "rdp",
+        },
     });
 
     let mut child = Command::new(&helper_path)
