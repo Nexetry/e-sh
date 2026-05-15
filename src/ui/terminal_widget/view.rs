@@ -98,14 +98,14 @@ impl<'a> TerminalView<'a> {
 
         if snapshot.cursor_visible && snapshot.display_offset == 0 {
             let focused = response.has_focus();
-            let cursor_on = if focused {
-                let phase = ui.ctx().input(|i| i.time) % 1.0;
+            let cursor_blink_on = if focused {
                 ui.ctx().request_repaint();
+                let phase = ui.ctx().input(|i| i.time) % 1.0;
                 phase < 0.5
             } else {
                 true
             };
-            if cursor_on {
+            if cursor_blink_on {
                 let (cy, cx) = snapshot.cursor;
                 let cursor_rect = Rect::from_min_size(
                     Pos2::new(
@@ -114,12 +114,20 @@ impl<'a> TerminalView<'a> {
                     ),
                     Vec2::new(cell_width, row_height),
                 );
-                painter.rect_stroke(
-                    cursor_rect,
-                    0.0,
-                    Stroke::new(1.5, Color32::from_rgb(0xea, 0xea, 0xea)),
-                    egui::StrokeKind::Inside,
-                );
+                if focused {
+                    painter.rect_filled(
+                        cursor_rect,
+                        0.0,
+                        Color32::from_rgba_unmultiplied(0xea, 0xea, 0xea, 0xb0),
+                    );
+                } else {
+                    painter.rect_stroke(
+                        cursor_rect,
+                        0.0,
+                        Stroke::new(1.0, Color32::from_rgb(0x66, 0x66, 0x6a)),
+                        egui::StrokeKind::Inside,
+                    );
+                }
             }
         }
 
@@ -299,6 +307,9 @@ impl<'a> TerminalView<'a> {
                 .ctx()
                 .input(|input| (input.events.clone(), input.modifiers));
             let mut buf: Vec<u8> = Vec::new();
+            // Keys that may also produce `Event::Text`: defer one frame to avoid duplicate bytes
+            // when both Key and Text fire (e.g. `:`), but still emit if Text is missing (Vim `:`).
+            let mut pending_printable: Option<u8> = None;
 
             let copy_combo = (mods.command && !mods.shift && !mods.alt)
                 || (mods.ctrl && mods.shift && !mods.alt && !mods.command);
@@ -316,9 +327,28 @@ impl<'a> TerminalView<'a> {
                         if mods.command && (text == "c" || text == "C") {
                             continue;
                         }
-                        buf.extend_from_slice(text.as_bytes());
+                        if text.len() == 1 {
+                            let b = text.as_bytes()[0];
+                            if pending_printable == Some(b) {
+                                pending_printable = None;
+                                buf.push(b);
+                            } else {
+                                if let Some(p) = pending_printable.take() {
+                                    buf.push(p);
+                                }
+                                buf.push(b);
+                            }
+                        } else {
+                            if let Some(p) = pending_printable.take() {
+                                buf.push(p);
+                            }
+                            buf.extend_from_slice(text.as_bytes());
+                        }
                     }
                     egui::Event::Paste(text) => {
+                        if let Some(p) = pending_printable.take() {
+                            buf.push(p);
+                        }
                         buf.extend_from_slice(text.as_bytes());
                     }
                     egui::Event::Key {
@@ -336,27 +366,51 @@ impl<'a> TerminalView<'a> {
                             continue;
                         }
                         if matches!(key, Key::PageUp) && modifiers.shift {
+                            if let Some(p) = pending_printable.take() {
+                                buf.push(p);
+                            }
                             self.emulator.scroll(rows as i32);
                             continue;
                         }
                         if matches!(key, Key::PageDown) && modifiers.shift {
+                            if let Some(p) = pending_printable.take() {
+                                buf.push(p);
+                            }
                             self.emulator.scroll(-(rows as i32));
                             continue;
                         }
                         if matches!(key, Key::Home) && modifiers.shift {
+                            if let Some(p) = pending_printable.take() {
+                                buf.push(p);
+                            }
                             self.emulator.scroll(i32::MAX / 2);
                             continue;
                         }
                         if matches!(key, Key::End) && modifiers.shift {
+                            if let Some(p) = pending_printable.take() {
+                                buf.push(p);
+                            }
                             self.emulator.scroll_to_bottom();
                             continue;
                         }
                         if let Some(seq) = key_to_bytes(*key, *modifiers) {
+                            if let Some(p) = pending_printable.take() {
+                                buf.push(p);
+                            }
                             buf.extend_from_slice(&seq);
+                        } else if let Some(b) = deferred_printable_key_byte(*key, *modifiers) {
+                            if let Some(p) = pending_printable.take() {
+                                buf.push(p);
+                            }
+                            pending_printable = Some(b);
                         }
                     }
                     _ => {}
                 }
+            }
+
+            if let Some(p) = pending_printable.take() {
+                buf.push(p);
             }
 
             if !buf.is_empty() {
@@ -483,8 +537,34 @@ impl<'a> TerminalView<'a> {
     }
 }
 
+/// Single-byte keys where winit/egui often sends `Event::Text` as well as `Event::Key`.
+/// When Text is missing (some hosts / IME paths), we still need the byte on the PTY.
+fn deferred_printable_key_byte(key: Key, mods: Modifiers) -> Option<u8> {
+    if mods.ctrl || mods.alt || mods.command || mods.mac_cmd {
+        return None;
+    }
+    use Key::*;
+    match key {
+        Colon => Some(b':'),
+        Semicolon if mods.shift => Some(b':'),
+        Semicolon => Some(b';'),
+        Slash if mods.shift => Some(b'?'),
+        Slash => Some(b'/'),
+        Questionmark => Some(b'?'),
+        _ => None,
+    }
+}
+
 fn key_to_bytes(key: Key, mods: Modifiers) -> Option<Vec<u8>> {
     use Key::*;
+    // Option/Alt + horizontal arrows: readline / zsh emacs-style word motion (Meta-b / Meta-f).
+    if mods.alt && !mods.ctrl && !mods.command && !mods.mac_cmd {
+        match key {
+            ArrowLeft => return Some(vec![b'\x1b', b'b']),
+            ArrowRight => return Some(vec![b'\x1b', b'f']),
+            _ => {}
+        }
+    }
     if mods.ctrl && !mods.shift && !mods.alt {
         if let Some(b) = ctrl_byte(key) {
             return Some(vec![b]);
